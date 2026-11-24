@@ -40,7 +40,7 @@ func meta() provider.Meta {
 		Kind:            Kind,
 		Name:            "WHMCS",
 		Description:     "通用 WHMCS 站点（Lagom / standard_cart / twenty-one 主题），按商品组页面监控，购物车流程锁单",
-		Caps:            provider.Capabilities{Catalog: true, Coupon: true, Order: true, SessionCheck: true, Login: true},
+		Caps:            provider.Capabilities{Catalog: true, Coupon: true, Order: true, SessionCheck: true, Login: true, Cancel: true},
 		MinInterval:     20 * time.Second,
 		DefaultInterval: 60 * time.Second,
 		DefaultFetch:    domain.FetchFlareSolverr,

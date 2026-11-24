@@ -42,7 +42,7 @@ func meta() provider.Meta {
 		Kind:        Kind,
 		Name:        "usvps24",
 		Description: "usvps24.com（Inertia 计费系统）：公开库存接口 /api/v1/stock 监控，登录会话 + Turnstile 锁单",
-		Caps:        provider.Capabilities{Catalog: true, Coupon: true, Order: true, SessionCheck: true, Login: true},
+		Caps:        provider.Capabilities{Catalog: true, Coupon: true, Order: true, SessionCheck: true, Login: true, Cancel: true},
 		// 接口每 60 秒更新且要求间隔 ≥60 秒；调度有 ±10% 抖动，取 70 秒保证下限。
 		MinInterval:     70 * time.Second,
 		DefaultInterval: 70 * time.Second,
@@ -730,7 +730,7 @@ func parseCheckoutResult(resp *fetch.Response, baseURL string, quote domain.Quot
 		if strings.Contains(strings.ToLower(message), "stock") || strings.Contains(message, "售罄") || strings.Contains(message, "库存") {
 			return result, fmt.Errorf("%w: %s", provider.ErrOutOfStock, message)
 		}
-		return result, fmt.Errorf("checkout rejected: %s", message)
+		return result, fmt.Errorf("%w: checkout rejected: %s", provider.ErrOrderRejected, message)
 	}
 	for _, landed := range []string{data.URL, resp.URL} {
 		if invoiceID, payURL, ok := checkoutLocation(landed, baseURL); ok && invoiceID != "" {

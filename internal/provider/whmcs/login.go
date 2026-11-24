@@ -25,13 +25,13 @@ var twoFactorPattern = regexp.MustCompile(`(?i)two[- ]factor|2fa|二次验证|�
 
 // Login 实现 provider.Authenticator：提交 WHMCS 登录表单，验证码交给 Solver，成功后以 CheckSession 确认。
 func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Credentials) (provider.SessionInfo, error) {
-	form, formURL, doc, err := p.findLoginForm(ctx, env)
+	form, loginPage, err := p.findLoginForm(ctx, env)
 	if err != nil {
 		return provider.SessionInfo{}, err
 	}
 	if form == nil {
 		// 没有登录表单且已带退出链接：会话本来就有效。
-		if doc != nil && doc.Find(`a[href*="logout"]`).Length() > 0 {
+		if loginPage != nil && loginPage.doc.Find(`a[href*="logout"]`).Length() > 0 {
 			return p.CheckSession(ctx, env)
 		}
 		return provider.SessionInfo{}, errors.New("login form not found")
@@ -45,9 +45,10 @@ func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Cre
 	values.Set(form.Find(`input[type="password"]`).First().AttrOr("name", "password"), creds.Password)
 	values.Set("rememberme", "on")
 	if values.Get("token") == "" {
-		values.Set("token", htmlutil.CSRFToken(doc, nil))
+		values.Set("token", htmlutil.CSRFToken(loginPage.doc, loginPage.resp.Body))
 	}
-	if err := solveCaptcha(ctx, env, doc, values, formURL, env.Site.Name+" 登录"); err != nil {
+	formURL := loginPage.resp.URL
+	if err := solveCaptcha(ctx, env, loginPage, values, captchaLogin, formURL, env.Site.Name+" 登录"); err != nil {
 		return provider.SessionInfo{}, err
 	}
 	action := htmlutil.Resolve(formURL, form.AttrOr("action", formURL))
@@ -73,9 +74,9 @@ func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Cre
 	return info, err
 }
 
-// findLoginForm 依次打开登录入口，返回第一个带密码框的表单。
-func (p *Provider) findLoginForm(ctx context.Context, env provider.Env) (*goquery.Selection, string, *goquery.Document, error) {
-	var lastDoc *goquery.Document
+// findLoginForm 依次打开登录入口，返回第一个带密码框的表单及其所在页面；已登录（有退出链接）时 form 为 nil。
+func (p *Provider) findLoginForm(ctx context.Context, env provider.Env) (*goquery.Selection, *page, error) {
+	var last *page
 	var lastErr error
 	for _, path := range loginPaths {
 		loaded, err := fetchPage(ctx, env, &fetch.Request{Method: http.MethodGet, URL: p.baseURL + path})
@@ -83,16 +84,15 @@ func (p *Provider) findLoginForm(ctx context.Context, env provider.Env) (*goquer
 			lastErr = err
 			continue
 		}
-		doc := loaded.doc
-		lastDoc, lastErr = doc, nil
-		if form := passwordForm(doc); form != nil {
-			return form, loaded.resp.URL, doc, nil
+		last, lastErr = loaded, nil
+		if form := passwordForm(loaded.doc); form != nil {
+			return form, loaded, nil
 		}
-		if doc.Find(`a[href*="logout"]`).Length() > 0 {
-			return nil, loaded.resp.URL, doc, nil
+		if loaded.doc.Find(`a[href*="logout"]`).Length() > 0 {
+			return nil, loaded, nil
 		}
 	}
-	return nil, "", lastDoc, lastErr
+	return nil, last, lastErr
 }
 
 // passwordForm 页面上带密码框与用户名 / 邮箱框的表单（排除注册、改密等多密码框表单）。

@@ -17,7 +17,7 @@ export type BillingCycle =
 export type StockStatus = 'in_stock' | 'out_of_stock' | 'preorder' | 'closed' | 'unknown'
 export type FetchMode = 'direct' | 'flaresolverr'
 export type AccountStatus = 'unknown' | 'active' | 'expired'
-export type OrderStatus = 'pending' | 'placed' | 'dry_run' | 'failed'
+export type OrderStatus = 'pending' | 'placed' | 'dry_run' | 'failed' | 'cancelled'
 export type EventType =
   | 'restock'
   | 'sold_out'
@@ -49,6 +49,8 @@ export interface ProviderMeta {
     coupon: boolean
     order: boolean
     session_check: boolean
+    /** 支持取消未付款订单（具体订单仍可能被站点拒绝） */
+    cancel: boolean
     login: boolean
     stock_needs_login: boolean
   }
@@ -280,6 +282,8 @@ export interface Order {
   error?: string
   created_at: string
   duration_ms: number
+  /** 在站点取消的时间；未取消为 Go 零值时间 */
+  cancelled_at?: string
 }
 
 export interface AppEvent {

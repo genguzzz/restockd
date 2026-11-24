@@ -429,6 +429,13 @@ ON CONFLICT(id) DO UPDATE SET product_id=excluded.product_id, account_id=exclude
 	return err
 }
 
+// GetOrder 按 ID 读取订单。
+func (s *Store) GetOrder(ctx context.Context, id string) (domain.Order, error) {
+	var order domain.Order
+	err := s.getJSON(ctx, `SELECT data FROM orders WHERE id=?`, &order, id)
+	return order, err
+}
+
 // LatestPlacedOrder 某站点商品在 since 之后由该账号成功锁下的最近一单；没有时返回 ErrNotFound。
 func (s *Store) LatestPlacedOrder(ctx context.Context, siteID, productID, accountID string, since time.Time) (domain.Order, error) {
 	var order domain.Order

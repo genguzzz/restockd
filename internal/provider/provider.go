@@ -23,6 +23,9 @@ import (
 // ErrSessionExpired 账号会话失效：有托管凭据时引擎会自动重新登录，否则需要重新粘贴 Cookie。
 var ErrSessionExpired = errors.New("session expired")
 
+// ErrOrderRejected 站点明确拒绝了这笔订单（邀请制、配置校验不过、结算页报错等），重试也不会成功。
+var ErrOrderRejected = errors.New("order rejected by site")
+
 // ErrLoginFailed 站点明确拒绝了登录（账号或密码错误、账号被锁等），不应重试。
 var ErrLoginFailed = errors.New("login failed")
 
@@ -64,6 +67,8 @@ type Capabilities struct {
 	SessionCheck bool `json:"session_check"`
 	// Login 支持用托管的账号密码自动登录（实现 Authenticator）。
 	Login bool `json:"login"`
+	// Cancel 支持取消未付款订单（实现 Canceler；具体订单仍可能被站点拒绝）。
+	Cancel bool `json:"cancel"`
 	// StockNeedsLogin 查询库存是否必须登录（决定监控时是否带账号会话）。
 	StockNeedsLogin bool `json:"stock_needs_login"`
 }
@@ -138,6 +143,12 @@ type Provider interface {
 type Orderer interface {
 	Quote(ctx context.Context, env Env, spec domain.OrderSpec) (domain.Quote, error)
 	PlaceOrder(ctx context.Context, env Env, spec domain.OrderSpec) (domain.OrderResult, error)
+}
+
+// Canceler 可选能力：取消已生成的未付款订单 / 账单。站点不允许客户自助取消时返回包装了
+// ErrNotSupported 的错误并说明原因（如 WHMCS 待开通服务通常由商家按规则自动作废）。
+type Canceler interface {
+	CancelOrder(ctx context.Context, env Env, result domain.OrderResult) error
 }
 
 // SessionInfo 会话检查结果。

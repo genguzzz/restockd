@@ -8,7 +8,7 @@ import TimeAgo from './TimeAgo.vue'
 
 const props = defineProps<{ order: LastOrder; size?: 'small' | 'medium' }>()
 
-const labels: Partial<Record<LastOrder['status'], string>> = { placed: '已锁单', dry_run: '已试下单', failed: '上次失败' }
+const labels: Partial<Record<LastOrder['status'], string>> = { placed: '已锁单', dry_run: '已试下单', failed: '上次失败', cancelled: '订单已取消' }
 const meta = computed<TagMeta>(() => {
   const base = metaOf(orderStatusMeta, props.order.status)
   return { ...base, label: labels[props.order.status] ?? base.label }

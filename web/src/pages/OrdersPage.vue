@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 订单页：锁单记录表格，实时推送新订单 / 状态变化
+// 订单页：锁单记录表格，实时推送新订单 / 状态变化；已锁单的未付款订单可在站点取消
 import { computed, h, onMounted, ref } from 'vue'
 import { NButton, NCard, NDataTable, NEllipsis, NIcon, NTag, NText, type DataTableColumns } from 'naive-ui'
 import { OpenOutline, RefreshOutline } from '@vicons/ionicons5'
@@ -14,6 +14,7 @@ import { upsertById } from '@/utils/list'
 import PageHeader from '@/components/PageHeader.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import CycleLabel from '@/components/CycleLabel.vue'
+import CancelOrderButton from '@/components/CancelOrderButton.vue'
 
 const orders = ref<Order[]>([])
 const { siteNames } = useSites()
@@ -64,13 +65,19 @@ const columns = computed<DataTableColumns<Order>>(() => [
     key: 'pay_url',
     width: 80,
     render: (row) =>
-      row.result?.pay_url
+      row.result?.pay_url && row.status === 'placed'
         ? h(
             NButton,
             { tag: 'a', href: row.result.pay_url, target: '_blank', rel: 'noopener noreferrer', size: 'tiny', type: 'primary', secondary: true },
             { default: () => '去付款', icon: () => h(NIcon, null, { default: () => h(OpenOutline) }) },
           )
         : '-',
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 90,
+    render: (row) => h(CancelOrderButton, { order: row, onCancelled: (order: Order) => (orders.value = upsertById(orders.value, order)) }),
   },
   { title: '耗时', key: 'duration_ms', width: 80, render: (row) => `${row.duration_ms} ms` },
   {

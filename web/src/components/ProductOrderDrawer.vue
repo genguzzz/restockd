@@ -137,7 +137,7 @@ const submit = async (dryRun: boolean) => {
       </template>
     </n-drawer-content>
   </n-drawer>
-  <OrderResultModal :order="result" @close="result = null" />
+  <OrderResultModal :order="result" @close="result = null" @cancelled="(value) => (result = value)" />
 </template>
 
 <style scoped>

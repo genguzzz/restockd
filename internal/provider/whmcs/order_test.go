@@ -423,3 +423,22 @@ func TestCheckSessionReportsHTTPErrors(t *testing.T) {
 		t.Fatalf("want http error, got %v", err)
 	}
 }
+
+// AaITR：页首有一个空的 confproduct 表单，真正的字段在后面的 #frmConfigureProduct 里。
+func TestConfigureFormPrefersRealForm(t *testing.T) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(`<html><body>
+<form method="post" action="cart.php?a=confproduct&i=0"><input type="hidden" name="token" value="t"/></form>
+<form id="frmConfigureProduct"><input name="hostname" value="AaITR-1"/><input type="password" name="rootpw" value="x"/><input name="ns1prefix" value="ns1"/></form>
+</body></html>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := configureForm(doc)
+	if form == nil || form.Find(`input[name="hostname"]`).Length() != 1 {
+		t.Fatal("must pick #frmConfigureProduct, not the first confproduct form")
+	}
+	fallback, _ := goquery.NewDocumentFromReader(strings.NewReader(`<form action="cart.php?a=confproduct"></form><form action="/cart.php?a=confproduct"><input name="hostname"/><input name="rootpw"/></form>`))
+	if form := configureForm(fallback); form == nil || form.Find(`input[name="rootpw"]`).Length() != 1 {
+		t.Fatal("without the id, the confproduct form with most fields wins")
+	}
+}

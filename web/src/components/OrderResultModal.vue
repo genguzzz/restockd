@@ -1,13 +1,14 @@
 <script setup lang="ts">
-// 下单 / 试下单结果：状态、金额、订单与账单号、说明、错误、去付款
+// 下单 / 试下单结果：状态、金额、订单与账单号、说明、错误；已锁单时可去付款或取消订单
 import { computed } from 'vue'
 import { NButton, NDescriptions, NDescriptionsItem, NModal, NSpace, NTag, NText } from 'naive-ui'
 import type { Order } from '@/api/types'
 import { metaOf, orderStatusMeta } from '@/utils/labels'
 import MoneyText from './MoneyText.vue'
+import CancelOrderButton from './CancelOrderButton.vue'
 
 const props = defineProps<{ order: Order | null }>()
-const emit = defineEmits<{ (e: 'close'): void }>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'cancelled', order: Order): void }>()
 const status = computed(() => (props.order ? metaOf(orderStatusMeta, props.order.status) : null))
 </script>
 
@@ -32,9 +33,12 @@ const status = computed(() => (props.order ? metaOf(orderStatusMeta, props.order
       </n-descriptions-item>
       <n-descriptions-item label="耗时">{{ order.duration_ms }} ms</n-descriptions-item>
     </n-descriptions>
-    <template v-if="order?.result.pay_url" #footer>
+    <template v-if="order?.status === 'placed'" #footer>
       <n-space justify="end">
-        <n-button tag="a" type="primary" :href="order.result.pay_url" target="_blank" rel="noopener noreferrer">去付款</n-button>
+        <CancelOrderButton :order="order" size="medium" @cancelled="(value: Order) => emit('cancelled', value)" />
+        <n-button v-if="order.result.pay_url" tag="a" type="primary" :href="order.result.pay_url" target="_blank" rel="noopener noreferrer">
+          去付款
+        </n-button>
       </n-space>
     </template>
   </n-modal>

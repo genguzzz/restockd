@@ -397,6 +397,16 @@ func (s *Server) handleListOrders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, orders)
 }
 
+// handleCancelOrder 在站点取消已锁单的未付款订单；站点不允许取消时 400 并说明原因。
+func (s *Server) handleCancelOrder(w http.ResponseWriter, r *http.Request) {
+	order, err := s.engine.CancelOrder(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, order)
+}
+
 func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 	events, err := s.store.ListEvents(r.Context(), r.URL.Query().Get("site_id"), queryInt(r, "limit", 200))
 	if err != nil {

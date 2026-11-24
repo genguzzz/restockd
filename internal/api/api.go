@@ -123,6 +123,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/watches/{id}/quote", s.auth(s.handleQuote))
 	s.mux.HandleFunc("POST /api/watches/{id}/order", s.auth(s.handleOrder))
 	s.mux.HandleFunc("GET /api/orders", s.auth(s.handleListOrders))
+	s.mux.HandleFunc("POST /api/orders/{id}/cancel", s.auth(s.handleCancelOrder))
 	s.mux.HandleFunc("GET /api/events", s.auth(s.handleListEvents))
 	s.mux.HandleFunc("GET /api/stream", s.auth(s.handleStream))
 	s.mux.HandleFunc("GET /api/challenges", s.auth(s.handleListChallenges))

@@ -277,6 +277,8 @@ const (
 	OrderPlaced  OrderStatus = "placed"
 	OrderDryRun  OrderStatus = "dry_run"
 	OrderFailed  OrderStatus = "failed"
+	// OrderCancelled 已在站点取消（未付款订单 / 账单作废）。
+	OrderCancelled OrderStatus = "cancelled"
 )
 
 // OrderResult Provider 下单返回。
@@ -302,6 +304,8 @@ type Order struct {
 	Error       string      `json:"error,omitempty"`
 	CreatedAt   time.Time   `json:"created_at"`
 	DurationMs  int64       `json:"duration_ms"`
+	// CancelledAt 在站点取消的时间（未取消为零值）。
+	CancelledAt time.Time `json:"cancelled_at,omitempty"`
 }
 
 // EventType 库存事件类型。

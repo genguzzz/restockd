@@ -24,6 +24,7 @@ export const orderStatusMeta: Record<OrderStatus, TagMeta> = {
   dry_run: { label: '试下单', type: 'info' },
   pending: { label: '进行中', type: 'warning' },
   failed: { label: '失败', type: 'error' },
+  cancelled: { label: '已取消', type: 'default' },
 }
 
 export const stockMeta: Record<StockStatus, TagMeta> = {

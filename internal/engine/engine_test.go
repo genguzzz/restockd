@@ -129,10 +129,23 @@ func TestBuildSpecFallsBackToAccountDefaults(t *testing.T) {
 // ---- 端到端：假 Provider ----
 
 type fakeProvider struct {
-	mu       sync.Mutex
-	products []domain.Product
-	orders   []domain.OrderSpec
-	orderErr error
+	mu        sync.Mutex
+	products  []domain.Product
+	orders    []domain.OrderSpec
+	orderErr  error
+	cancelled []string
+	cancelErr error
+}
+
+// CancelOrder 记录被取消的账单号。
+func (f *fakeProvider) CancelOrder(_ context.Context, _ provider.Env, result domain.OrderResult) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.cancelErr != nil {
+		return f.cancelErr
+	}
+	f.cancelled = append(f.cancelled, result.InvoiceID)
+	return nil
 }
 
 var fakeState = &fakeProvider{}

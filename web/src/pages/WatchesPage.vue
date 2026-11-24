@@ -274,6 +274,6 @@ const columns = computed<DataTableColumns<Watch>>(() => [
       </n-descriptions>
     </n-modal>
 
-    <OrderResultModal :order="order" @close="order = null" />
+    <OrderResultModal :order="order" @close="order = null" @cancelled="(value) => (order = value)" />
   </div>
 </template>

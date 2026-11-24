@@ -194,7 +194,7 @@ func retryable(err error) bool {
 	if errors.As(err, &rateLimit) {
 		return false
 	}
-	for _, permanent := range []error{provider.ErrOutOfStock, provider.ErrSessionExpired, provider.ErrNotSupported, provider.ErrCouponInvalid, provider.ErrLoginFailed,
+	for _, permanent := range []error{provider.ErrOutOfStock, provider.ErrOrderRejected, provider.ErrSessionExpired, provider.ErrNotSupported, provider.ErrCouponInvalid, provider.ErrLoginFailed,
 		ErrNoAuthenticator, ErrNoCredentials, errAutoLogin, solver.ErrChallengeCancelled, context.DeadlineExceeded, context.Canceled} {
 		if errors.Is(err, permanent) {
 			return false

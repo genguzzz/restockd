@@ -17,7 +17,6 @@ import (
 	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/provider"
 	"github.com/genguzzz/restockd/internal/provider/htmlutil"
-	"github.com/genguzzz/restockd/internal/solver"
 )
 
 var (
@@ -39,16 +38,63 @@ func (p *Provider) post(ctx context.Context, env provider.Env, path string, form
 	return p.do(ctx, env, &fetch.Request{Method: http.MethodPost, URL: p.baseURL + path, Form: form})
 }
 
-// do 需要登录的页面：fetchPage 之后落到登录页即视为会话失效。
+// do 需要登录的页面：fetchPage 之后落到登录页即视为会话失效；落到「选择账户」页（WHMCS 8 用记住登录
+// 恢复会话时未选定客户账户）则自动选定后重试一次。
 func (p *Provider) do(ctx context.Context, env provider.Env, req *fetch.Request) (*page, error) {
 	result, err := fetchPage(ctx, env, req)
 	if err != nil {
 		return nil, err
 	}
+	if chooser := accountChooser(result); chooser != nil {
+		if err := p.chooseAccount(ctx, env, result, chooser); err != nil {
+			return nil, err
+		}
+		if result, err = fetchPage(ctx, env, req); err != nil {
+			return nil, err
+		}
+	}
 	if isLoginPage(result.doc, result.resp.URL) {
 		return nil, provider.ErrSessionExpired
 	}
 	return result, nil
+}
+
+// accountChooser WHMCS 8 的 /user/accounts 选择账户页：返回切换表单（找不到返回 nil）。
+func accountChooser(result *page) *goquery.Selection {
+	if !strings.Contains(result.resp.URL, "/user/accounts") {
+		return nil
+	}
+	form := result.doc.Find(`form[action*="/user/accounts"]`).FilterFunction(func(_ int, form *goquery.Selection) bool {
+		return form.Find(`input[name="id"]`).Length() > 0
+	}).First()
+	if form.Length() == 0 || result.doc.Find(".select-account a[data-id], a[data-id]").Length() == 0 {
+		return nil
+	}
+	return form
+}
+
+// chooseAccount 选定客户账户：优先标为所有者（Owner）的，否则第一个。
+func (p *Provider) chooseAccount(ctx context.Context, env provider.Env, result *page, form *goquery.Selection) error {
+	links := result.doc.Find(".select-account a[data-id], a[data-id]")
+	choice := links.First()
+	links.EachWithBreak(func(_ int, link *goquery.Selection) bool {
+		text := link.Text()
+		if strings.Contains(text, "所有者") || strings.Contains(strings.ToLower(text), "owner") {
+			choice = link
+			return false
+		}
+		return true
+	})
+	values := htmlutil.FormValues(form)
+	values.Set("id", choice.AttrOr("data-id", ""))
+	if values.Get("token") == "" {
+		values.Set("token", htmlutil.CSRFToken(result.doc, result.resp.Body))
+	}
+	action := htmlutil.Resolve(result.resp.URL, form.AttrOr("action", "/user/accounts"))
+	if _, err := fetchPage(ctx, env, &fetch.Request{Method: http.MethodPost, URL: action, Form: values}); err != nil {
+		return fmt.Errorf("choose account: %w", err)
+	}
+	return nil
 }
 
 // fetchPage 发请求、检查状态码并解析 HTML。
@@ -120,8 +166,8 @@ func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain
 			return domain.OrderResult{Total: quote.Total}, err
 		}
 		captcha := "none"
-		if kind, _, found := htmlutil.DetectCaptcha(checkout.doc); found {
-			captcha = string(kind)
+		if found, ok := detectCaptcha(checkout.doc, checkout.resp.Body, captchaCheckout); ok {
+			captcha = string(found.kind)
 		}
 		message := fmt.Sprintf("dry run: stopped before checkout submit; gateway=%s, captcha=%s", gateway, captcha)
 		if quote.Message != "" {
@@ -162,6 +208,9 @@ func (p *Provider) prepareCheckout(ctx context.Context, env provider.Env, spec d
 	if err != nil {
 		return nil, domain.Quote{}, promoUnknown, fmt.Errorf("checkout page: %w", err)
 	}
+	if checkout, err = p.acceptTerms(ctx, env, checkout); err != nil {
+		return nil, domain.Quote{}, promoUnknown, err
+	}
 	if checkout.doc.Find(`#frmCheckout, form[name="orderfrm"], form[action*="a=checkout"]`).Length() == 0 {
 		return nil, domain.Quote{}, promoUnknown, fmt.Errorf("checkout form not found (cart empty or product unavailable)")
 	}
@@ -181,6 +230,23 @@ func (p *Provider) emptyCart(ctx context.Context, env provider.Env) error {
 	return err
 }
 
+// configureForm 商品配置表单：优先 #frmConfigureProduct；否则在 action 含 confproduct 的表单中取字段最多的。
+// 注意 goquery 的 Find("A, B").First() 按文档顺序取第一个，而部分主题（如 AaITR）在页首还有一个空的
+// confproduct 表单，不能直接用。
+func configureForm(doc *goquery.Document) *goquery.Selection {
+	if form := doc.Find("#frmConfigureProduct").First(); form.Length() > 0 {
+		return form
+	}
+	var best *goquery.Selection
+	bestFields := 0
+	doc.Find("form[action*='confproduct']").Each(func(_ int, form *goquery.Selection) {
+		if fields := form.Find("input[name], select[name], textarea[name]").Length(); best == nil || fields > bestFields {
+			best, bestFields = form, fields
+		}
+	})
+	return best
+}
+
 func (p *Provider) addProduct(ctx context.Context, env provider.Env, spec domain.OrderSpec) error {
 	query := url.Values{"a": {"add"}, "pid": {spec.ProductID}}
 	if spec.Cycle != "" {
@@ -190,8 +256,8 @@ func (p *Provider) addProduct(ctx context.Context, env provider.Env, spec domain
 	if err != nil {
 		return fmt.Errorf("add to cart: %w", err)
 	}
-	form := conf.doc.Find("#frmConfigureProduct, form[action*='confproduct']").First()
-	if form.Length() == 0 {
+	form := configureForm(conf.doc)
+	if form == nil {
 		if inCart(conf.resp.URL) {
 			return nil
 		}
@@ -232,7 +298,7 @@ func (p *Provider) addProduct(ctx context.Context, env provider.Env, spec domain
 		if outOfStockPattern.MatchString(message) {
 			return provider.ErrOutOfStock
 		}
-		return fmt.Errorf("configure product: %s", message)
+		return fmt.Errorf("%w: configure product: %s", provider.ErrOrderRejected, message)
 	}
 	return nil
 }
@@ -388,24 +454,10 @@ func (p *Provider) checkoutForm(ctx context.Context, env provider.Env, checkout 
 		return nil, err
 	}
 	values.Set("paymentmethod", gateway)
-	if err := solveCaptcha(ctx, env, checkout.doc, values, p.baseURL+"/cart.php?a=checkout", fmt.Sprintf("%s 锁单 pid=%s", env.Site.Name, spec.ProductID)); err != nil {
+	if err := solveCaptcha(ctx, env, checkout, values, captchaCheckout, p.baseURL+"/cart.php?a=checkout", fmt.Sprintf("%s 锁单 pid=%s", env.Site.Name, spec.ProductID)); err != nil {
 		return nil, err
 	}
 	return values, nil
-}
-
-// solveCaptcha 页面带验证码时交给 Solver，并把 token 写入对应表单字段；没有验证码直接返回。
-func solveCaptcha(ctx context.Context, env provider.Env, doc *goquery.Document, values url.Values, pageURL, purpose string) error {
-	kind, siteKey, found := htmlutil.DetectCaptcha(doc)
-	if !found {
-		return nil
-	}
-	solution, err := env.Solve(ctx, solver.Challenge{Kind: kind, SiteKey: siteKey, PageURL: pageURL, Purpose: purpose})
-	if err != nil {
-		return err
-	}
-	values.Set(htmlutil.CaptchaField(kind), solution.Token)
-	return nil
 }
 
 func pickGateway(form *goquery.Selection, preferred string) (string, error) {
@@ -457,7 +509,7 @@ func parseCompletion(done *page, baseURL string, quote domain.Quote) (domain.Ord
 			if outOfStockPattern.MatchString(message) {
 				return result, provider.ErrOutOfStock
 			}
-			return result, fmt.Errorf("checkout rejected: %s", message)
+			return result, fmt.Errorf("%w: checkout rejected: %s", provider.ErrOrderRejected, message)
 		}
 		return result, fmt.Errorf("order confirmation not recognized at %s", done.resp.URL)
 	}

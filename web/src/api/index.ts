@@ -86,6 +86,7 @@ export const watchesApi = {
 
 export const ordersApi = {
   list: (limit = 100) => http.get<Order[]>('/api/orders', { limit }),
+  cancel: (id: string) => http.post<Order>(`/api/orders/${encodeURIComponent(id)}/cancel`),
 }
 
 export const eventsApi = {
