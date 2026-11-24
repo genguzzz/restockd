@@ -2,6 +2,7 @@
 // 手动粘贴 Cookie 对话框：支持 header / JSON / cookies.txt 三种格式，可同时提供 UA
 import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NForm, NFormItem, NInput, NModal, NSpace, NText } from 'naive-ui'
+import UserAgentInput from './UserAgentInput.vue'
 
 const props = defineProps<{ show: boolean; title?: string; defaultUserAgent?: string; loading?: boolean }>()
 const emit = defineEmits<{
@@ -26,9 +27,6 @@ const format = computed(() => {
   if (text.includes('\t')) return 'Netscape cookies.txt'
   return '请求头格式 a=1; b=2'
 })
-const fillBrowserUA = () => {
-  userAgent.value = navigator.userAgent
-}
 const submit = () => emit('submit', { raw: raw.value, userAgent: userAgent.value.trim() })
 </script>
 
@@ -52,11 +50,7 @@ const submit = () => emit('submit', { raw: raw.value, userAgent: userAgent.value
         </n-form-item>
         <n-text v-if="format" depth="3" style="font-size: 12px; margin-top: -12px; display: block">识别为：{{ format }}</n-text>
         <n-form-item label="User-Agent（可选）">
-          <n-input v-model:value="userAgent" placeholder="留空则沿用账号当前 UA">
-            <template #suffix>
-              <n-button text size="tiny" @click="fillBrowserUA">用当前浏览器</n-button>
-            </template>
-          </n-input>
+          <UserAgentInput v-model:value="userAgent" placeholder="留空则沿用账号当前 UA" />
         </n-form-item>
       </n-form>
     </n-space>

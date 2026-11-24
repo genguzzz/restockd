@@ -2,6 +2,10 @@
 import { ref, type Ref } from 'vue'
 import { useMessage } from 'naive-ui'
 
+export function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 export interface AsyncState<T, A extends unknown[]> {
   data: Ref<T | null>
   loading: Ref<boolean>
@@ -22,7 +26,7 @@ export function useAsync<T, A extends unknown[] = []>(fn: (...args: A) => Promis
       data.value = result
       return result
     } catch (err) {
-      const text = err instanceof Error ? err.message : String(err)
+      const text = errorText(err)
       error.value = text
       if (!options.silent) message.error(text)
       return null
@@ -33,7 +37,7 @@ export function useAsync<T, A extends unknown[] = []>(fn: (...args: A) => Promis
   return { data, loading, error, run }
 }
 
-// 执行一次带成功提示的操作，返回是否成功
+// 执行一次操作：成功可选提示，失败提示错误并返回 null
 export function useAction() {
   const message = useMessage()
   return async function act<T>(fn: () => Promise<T>, success?: string): Promise<T | null> {
@@ -42,8 +46,24 @@ export function useAction() {
       if (success) message.success(success)
       return result
     } catch (err) {
-      message.error(err instanceof Error ? err.message : String(err))
+      message.error(errorText(err))
       return null
     }
   }
+}
+
+// 按 key 记录进行中的操作（如 `${id}:poll`），供按钮 loading 使用
+export function useBusy() {
+  const keys = ref<Record<string, true>>({})
+  const isBusy = (key: string): boolean => keys.value[key] === true
+  async function track<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    keys.value = { ...keys.value, [key]: true }
+    try {
+      return await fn()
+    } finally {
+      const { [key]: _done, ...rest } = keys.value
+      keys.value = rest
+    }
+  }
+  return { isBusy, track }
 }

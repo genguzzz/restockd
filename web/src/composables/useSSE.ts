@@ -1,5 +1,5 @@
 // SSE 订阅：断线指数退避重连，按事件名分发类型化数据
-import { onScopeDispose, ref, type Ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import type { StreamEvents } from '@/api/types'
 
 export type StreamHandlers = { [K in keyof StreamEvents]?: (data: StreamEvents[K]) => void }
@@ -33,7 +33,16 @@ export function backoffDelay(attempt: number, base: number, max: number): number
   return Math.min(max, base * 2 ** attempt)
 }
 
-const eventNames: (keyof StreamEvents)[] = ['event', 'site', 'challenge', 'challenge_done', 'order']
+// 订阅的事件名：用 Record 保证与 StreamEvents 的键一一对应（漏写或多写都会编译报错）
+const streamEventKeys: Record<keyof StreamEvents, true> = {
+  event: true,
+  site: true,
+  challenge: true,
+  challenge_done: true,
+  order: true,
+  account: true,
+}
+export const streamEventNames = Object.keys(streamEventKeys) as (keyof StreamEvents)[]
 
 export function createStream(handlers: StreamHandlers, options: StreamOptions = {}): StreamController {
   const url = options.url ?? '/api/stream'
@@ -65,7 +74,7 @@ export function createStream(handlers: StreamHandlers, options: StreamOptions = 
       attempts.value += 1
       timer = schedule(connect, delay)
     }
-    for (const name of eventNames) {
+    for (const name of streamEventNames) {
       const handler = handlers[name] as ((data: unknown) => void) | undefined
       if (!handler) continue
       source.addEventListener(name, (event: MessageEvent) => {
@@ -90,11 +99,4 @@ export function createStream(handlers: StreamHandlers, options: StreamOptions = 
       connected.value = false
     },
   }
-}
-
-// 组件内使用：作用域销毁时自动关闭
-export function useSSE(handlers: StreamHandlers, options: StreamOptions = {}): StreamController {
-  const controller = createStream(handlers, options)
-  onScopeDispose(controller.close)
-  return controller
 }

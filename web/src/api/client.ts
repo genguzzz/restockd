@@ -1,11 +1,14 @@
 // 轻量 fetch 封装：JSON 编解码、携带 Cookie、统一错误、401 回调
 export class ApiError extends Error {
   readonly status: number
+  /** 解析后的错误响应体（如 409 时附带的已有订单） */
+  readonly data: unknown
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, data: unknown = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.data = data
   }
 }
 
@@ -62,7 +65,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       data && typeof data === 'object' && 'error' in data && typeof (data as { error: unknown }).error === 'string'
         ? (data as { error: string }).error
         : `HTTP ${response.status}`
-    throw new ApiError(response.status, message)
+    throw new ApiError(response.status, message, data)
   }
   return data as T
 }

@@ -1,5 +1,5 @@
-// 纯函数格式化工具：金额、周期、规格、相对时间
-import type { BillingCycle, EventType, Money, Specs, StockStatus } from '@/api/types'
+// 纯函数格式化工具：金额、周期、规格、间隔、时间
+import type { BillingCycle, Money, Specs } from '@/api/types'
 
 const currencySymbols: Record<string, string> = { CNY: '¥', USD: '$', CAD: 'C$', EUR: '€', GBP: '£', HKD: 'HK$', AUD: 'A$', JPY: '¥' }
 
@@ -37,25 +37,6 @@ export function cycleLabel(cycle: string | null | undefined): string {
   return cycleLabels[cycle as BillingCycle] ?? cycle
 }
 
-export const stockLabels: Record<StockStatus, string> = {
-  in_stock: '有货',
-  out_of_stock: '缺货',
-  preorder: '预售',
-  closed: '关闭',
-  unknown: '未知',
-}
-
-export const eventLabels: Record<EventType, string> = {
-  restock: '补货',
-  sold_out: '售罄',
-  price_change: '价格变动',
-  new_product: '新品',
-  order: '锁单',
-  challenge: '人工验证',
-  poll_error: '轮询失败',
-  account: '账号异常',
-}
-
 export function formatSize(mb: number): string {
   if (mb >= 1024) {
     const gb = mb / 1024
@@ -86,7 +67,7 @@ export function specsSummary(specs: Specs | null | undefined): string {
 
 // 相对时间：过去 "3 分钟前"，未来 "2 分钟后"
 export function timeAgo(value: string | null | undefined, now: number = Date.now()): string {
-  if (!value) return '-'
+  if (!value || isZeroTime(value)) return '-'
   const time = new Date(value).getTime()
   if (Number.isNaN(time) || time <= 0) return '-'
   const diff = Math.round((now - time) / 1000)
@@ -102,14 +83,32 @@ export function timeAgo(value: string | null | undefined, now: number = Date.now
 }
 
 export function formatDateTime(value: string | null | undefined): string {
-  if (!value) return '-'
+  if (!value || isZeroTime(value)) return '-'
   const date = new Date(value)
   if (Number.isNaN(date.getTime()) || date.getTime() <= 0) return '-'
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
-// 是否为 Go 零值时间（0001-01-01）
+// Go 的 time.Time 总会序列化，零值 "0001-01-01T00:00:00Z" 表示「没有」
 export function isZeroTime(value: string | null | undefined): boolean {
   return !value || value.startsWith('0001-01-01')
+}
+
+export function hasTime(value: string | null | undefined): value is string {
+  return !isZeroTime(value)
+}
+
+// 轮询间隔：整小时 / 整分钟优先，如 "1 小时"、"3 分钟"、"90 秒"
+export function formatInterval(sec: number): string {
+  if (sec >= 3600 && sec % 3600 === 0) return `${sec / 3600} 小时`
+  if (sec >= 60 && sec % 60 === 0) return `${sec / 60} 分钟`
+  return `${sec} 秒`
+}
+
+// 时间是否在最近 ms 毫秒内（零值 / 无效时间为否）
+export function isRecent(value: string | null | undefined, ms: number, now: number = Date.now()): boolean {
+  if (!hasTime(value)) return false
+  const time = new Date(value).getTime()
+  return !Number.isNaN(time) && now - time < ms
 }

@@ -5,7 +5,11 @@ import { RouterLink } from 'vue-router'
 import { NBadge, NButton, NCard, NEllipsis, NGi, NGrid, NSpin, NStatistic, NTag, NText, useMessage, useThemeVars } from 'naive-ui'
 import { eventsApi, sitesApi, statsApi } from '@/api'
 import type { AppEvent, Site, Stats } from '@/api/types'
+import { useAction, useAsync, useBusy } from '@/composables/useAsync'
 import { onLive } from '@/composables/useLive'
+import { useSites } from '@/composables/useSites'
+import { hasTime } from '@/utils/format'
+import { upsertById } from '@/utils/list'
 import EventFeed from '@/components/EventFeed.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TimeAgo from '@/components/TimeAgo.vue'
@@ -16,13 +20,11 @@ const MAX_EVENTS = 100
 
 const message = useMessage()
 const themeVars = useThemeVars()
+const act = useAction()
+const { isBusy, track } = useBusy()
+const { sites, siteNames, loading: loadingSites } = useSites()
 const stats = ref<Stats | null>(null)
 const events = ref<AppEvent[]>([])
-const sites = ref<Site[]>([])
-const loadingEvents = ref(false)
-const loadingSites = ref(false)
-const polling = ref<Record<string, boolean>>({})
-const siteNames = computed<Record<string, string>>(() => Object.fromEntries(sites.value.map((site) => [site.id, site.name])))
 
 interface StatCard {
   key: string
@@ -45,8 +47,6 @@ const statCards = computed<StatCard[]>(() => {
   ]
 })
 
-const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
-
 async function loadStats(): Promise<void> {
   try {
     stats.value = await statsApi.get()
@@ -55,39 +55,16 @@ async function loadStats(): Promise<void> {
   }
 }
 
-async function loadEvents(): Promise<void> {
-  loadingEvents.value = true
-  try {
-    events.value = await eventsApi.list(50)
-  } catch (err) {
-    message.error(errorMessage(err))
-  } finally {
-    loadingEvents.value = false
-  }
-}
-
-async function loadSites(): Promise<void> {
-  loadingSites.value = true
-  try {
-    sites.value = await sitesApi.list()
-  } catch (err) {
-    message.error(errorMessage(err))
-  } finally {
-    loadingSites.value = false
-  }
-}
+const { loading: loadingEvents, run: loadEvents } = useAsync(async () => {
+  events.value = await eventsApi.list(50)
+  return events.value
+})
 
 async function pollSite(site: Site): Promise<void> {
-  polling.value = { ...polling.value, [site.id]: true }
-  try {
-    const result = await sitesApi.poll(site.id)
-    message.success(`已抓取 ${result.products} 个商品`)
-    void loadStats()
-  } catch (err) {
-    message.error(errorMessage(err))
-  } finally {
-    polling.value = { ...polling.value, [site.id]: false }
-  }
+  const result = await track(site.id, () => act(() => sitesApi.poll(site.id)))
+  if (!result) return
+  message.success(`已抓取 ${result.products} 个商品`)
+  void loadStats()
 }
 
 let statsTimer: ReturnType<typeof setInterval> | null = null
@@ -101,13 +78,8 @@ function scheduleStats(): void {
 }
 
 onLive('event', (event) => {
-  if (!events.value.some((item) => item.id === event.id)) events.value = [event, ...events.value].slice(0, MAX_EVENTS)
+  events.value = upsertById(events.value, event, { prepend: true }).slice(0, MAX_EVENTS)
   scheduleStats()
-})
-onLive('site', (site) => {
-  const index = sites.value.findIndex((item) => item.id === site.id)
-  if (index >= 0) sites.value = sites.value.map((item) => (item.id === site.id ? site : item))
-  else sites.value = [...sites.value, site]
 })
 onLive('challenge', () => scheduleStats())
 onLive('challenge_done', () => scheduleStats())
@@ -116,7 +88,6 @@ onLive('order', () => scheduleStats())
 onMounted(() => {
   void loadStats()
   void loadEvents()
-  void loadSites()
   statsTimer = setInterval(() => void loadStats(), STATS_REFRESH_MS)
 })
 onBeforeUnmount(() => {
@@ -175,13 +146,13 @@ onBeforeUnmount(() => {
                   </div>
                   <n-text depth="3" class="site-meta">
                     有货 {{ site.in_stock_count }} / {{ site.product_count }} · 上次 <time-ago :value="site.last_poll_at" />
-                    <template v-if="site.enabled"> · 下次 <time-ago :value="site.next_poll_at" /></template>
+                    <template v-if="site.enabled && hasTime(site.next_poll_at)"> · 下次 <time-ago :value="site.next_poll_at" /></template>
                   </n-text>
                   <n-ellipsis v-if="site.last_error" :style="{ color: themeVars.errorColor, fontSize: '12px', maxWidth: '100%' }">
                     {{ site.last_error }}
                   </n-ellipsis>
                 </div>
-                <n-button size="small" secondary :loading="polling[site.id] === true" @click="pollSite(site)">立即轮询</n-button>
+                <n-button size="small" secondary :loading="isBusy(site.id)" @click="pollSite(site)">立即轮询</n-button>
               </div>
             </div>
           </n-spin>

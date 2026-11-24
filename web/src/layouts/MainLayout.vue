@@ -56,7 +56,7 @@ const themeText = computed(() => ({ auto: '跟随系统', light: '浅色', dark:
 const pageTitle = computed(() => (route.meta.title as string | undefined) ?? '')
 
 onMounted(() => {
-  void startLive()
+  startLive()
 })
 
 const logout = async () => {

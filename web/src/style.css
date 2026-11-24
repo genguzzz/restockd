@@ -29,3 +29,17 @@ code {
 .muted {
   opacity: 0.65;
 }
+/* 设置卡片里的说明框与两列表单行 */
+.card-note {
+  margin: -4px 0 16px;
+  font-size: 12px;
+  word-break: break-word;
+}
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 0 12px;
+}
+.form-row.even {
+  grid-template-columns: 1fr 1fr;
+}
