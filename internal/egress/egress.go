@@ -4,9 +4,11 @@
 //     将来的代理池只需实现同一接口。
 //   - Client：实现 fetch.Client，按顺序尝试出口；连接失败、站点限流时换下一个，并把出了问题的出口
 //     暂时冷却（Health）。非幂等请求（POST 等）只在连接都没建立时回退，避免重复下单。
+//     配置了 Browser 时，遇到 Cloudflare 质询在同一出口上用真实浏览器过质询（cf_clearance 绑定出口 IP）。
 package egress
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -25,9 +27,9 @@ import (
 const Direct = "direct"
 
 const (
-	// connectCooldown 出口连不上时的冷却时间（对所有站点生效）。
+	// connectCooldown 连不上时的冷却时间：代理本身连不上对所有站点生效，目标站点连不上只冷却该 host。
 	connectCooldown = 2 * time.Minute
-	// defaultRateLimitCooldown 站点 429 未带 Retry-After 时的冷却时间。
+	// defaultRateLimitCooldown 站点 429 未带 Retry-After、且 Client 未指定时的冷却时间。
 	defaultRateLimitCooldown = time.Hour
 )
 
@@ -53,6 +55,8 @@ type Route struct {
 	ID     string
 	Name   string
 	Client fetch.Client
+	// Proxy 代理地址，直连为空；浏览器回落经同一代理，连接失败按它区分是代理还是目标站点的问题。
+	Proxy string
 }
 
 // Pool 出口来源。preferred 为站点指定的出口 ID 优先级（空表示用默认）；返回按优先级排列的可用出口。
@@ -65,26 +69,46 @@ type Registry struct {
 	mu       sync.RWMutex
 	direct   fetch.Client
 	timeout  time.Duration
+	health   *Health
 	proxies  map[string]Proxy
 	defaults []string
 	clients  map[string]fetch.Client
 }
 
-// NewRegistry direct 为服务器默认出口客户端，timeout 用于新建代理客户端。
-func NewRegistry(direct fetch.Client, timeout time.Duration) *Registry {
-	return &Registry{direct: direct, timeout: timeout, proxies: map[string]Proxy{}, clients: map[string]fetch.Client{}}
+// NewRegistry direct 为服务器默认出口客户端，timeout 用于新建代理客户端；
+// health 为 Client 共用的冷却表，代理地址变更时清掉该出口的冷却（可为 nil）。
+func NewRegistry(direct fetch.Client, timeout time.Duration, health *Health) *Registry {
+	return &Registry{direct: direct, timeout: timeout, health: health, proxies: map[string]Proxy{}, clients: map[string]fetch.Client{}}
 }
 
-// Apply 热更新登记表；URL 变化的代理在下次使用时重建客户端。
+// Apply 热更新登记表：释放不再登记的代理客户端；地址变了的代理视为新出口，清除其冷却。
 func (r *Registry) Apply(settings Settings) {
 	proxies := make(map[string]Proxy, len(settings.Proxies))
+	urls := map[string]bool{}
 	for _, proxy := range settings.Proxies {
 		proxies[proxy.ID] = proxy
+		urls[proxy.URL] = true
 	}
 	r.mu.Lock()
+	var changed []string
+	for id, old := range r.proxies {
+		if proxy, ok := proxies[id]; !ok || proxy.URL != old.URL {
+			changed = append(changed, id)
+		}
+	}
+	for proxyURL := range r.clients {
+		if !urls[proxyURL] {
+			delete(r.clients, proxyURL)
+		}
+	}
 	r.proxies = proxies
 	r.defaults = append([]string(nil), settings.Default...)
 	r.mu.Unlock()
+	if r.health != nil {
+		for _, id := range changed {
+			r.health.reset(id)
+		}
+	}
 }
 
 // Routes 实现 Pool：站点指定了出口则严格按其列表（都不可用时报错，不偷偷回落直连——
@@ -98,7 +122,7 @@ func (r *Registry) Routes(siteID string, preferred []string) ([]Route, error) {
 	}
 	r.mu.RUnlock()
 	if len(chain) == 0 {
-		return []Route{{ID: Direct, Name: "直连", Client: r.direct}}, nil
+		return []Route{r.directRoute()}, nil
 	}
 	var routes []Route
 	seen := map[string]bool{}
@@ -119,9 +143,13 @@ func (r *Registry) Routes(siteID string, preferred []string) ([]Route, error) {
 		if explicit {
 			return nil, fmt.Errorf("%w (site %s: %s)", ErrNoEgress, siteID, strings.Join(chain, ","))
 		}
-		return []Route{{ID: Direct, Name: "直连", Client: r.direct}}, nil
+		return []Route{r.directRoute()}, nil
 	}
 	return routes, nil
+}
+
+func (r *Registry) directRoute() Route {
+	return Route{ID: Direct, Name: "直连", Client: r.direct}
 }
 
 // Route 单个出口（测试连通性用）。
@@ -138,7 +166,7 @@ func (r *Registry) Route(id string) (Route, error) {
 
 func (r *Registry) route(id string) (Route, bool, error) {
 	if id == Direct {
-		return Route{ID: Direct, Name: "直连", Client: r.direct}, true, nil
+		return r.directRoute(), true, nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -148,58 +176,106 @@ func (r *Registry) route(id string) (Route, bool, error) {
 	}
 	client, ok := r.clients[proxy.URL]
 	if !ok {
-		direct, err := fetch.NewDirectClient(r.timeout, proxy.URL)
+		httpClient, err := fetch.NewHTTPClient(r.timeout, proxy.URL)
 		if err != nil {
 			return Route{}, false, err
 		}
-		client = direct
+		client = httpClient
 		r.clients[proxy.URL] = client
 	}
-	return Route{ID: proxy.ID, Name: firstNonEmpty(proxy.Name, proxy.ID), Client: client}, true, nil
+	return Route{ID: proxy.ID, Name: cmp.Or(proxy.Name, proxy.ID), Client: client, Proxy: proxy.URL}, true, nil
 }
 
-// Health 出口冷却状态，跨请求共享。连接失败按出口全局冷却；限流按「站点 + 出口 + 路径前缀」冷却
-// （站点往往只封部分页面，如 usvps24 封下单页但库存接口照常）。
+// Health 出口冷却状态，跨请求共享。连接失败：代理连不上按出口全局冷却，目标 host 连不上按「出口 + host」冷却；
+// 限流按「站点 + 出口 + 路径前缀」冷却（站点往往只封部分页面，如 usvps24 封下单页但库存接口照常）。
+// 过期条目在读写时顺手删除。
 type Health struct {
 	mu    sync.Mutex
-	until map[string]time.Time
+	until map[coolKey]time.Time
 	now   func() time.Time
+}
+
+// coolKey 冷却范围；site 为空表示连接冷却，scope 为空表示整个出口。
+type coolKey struct {
+	site  string
+	route string
+	scope string
 }
 
 // NewHealth 创建冷却表。
 func NewHealth() *Health {
-	return &Health{until: map[string]time.Time{}, now: time.Now}
+	return &Health{until: map[coolKey]time.Time{}, now: time.Now}
 }
 
-func (h *Health) cooling(key string) time.Duration {
+func (h *Health) cooling(keys ...coolKey) time.Duration {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.until[key].Sub(h.now())
+	now := h.now()
+	var wait time.Duration
+	for _, key := range keys {
+		until, ok := h.until[key]
+		if !ok {
+			continue
+		}
+		if !until.After(now) {
+			delete(h.until, key)
+			continue
+		}
+		wait = max(wait, until.Sub(now))
+	}
+	return wait
 }
 
-func (h *Health) cool(key string, d time.Duration) {
+func (h *Health) cool(key coolKey, d time.Duration) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if until := h.now().Add(d); until.After(h.until[key]) {
+	now := h.now()
+	for other, until := range h.until {
+		if !until.After(now) {
+			delete(h.until, other)
+		}
+	}
+	if until := now.Add(d); until.After(h.until[key]) {
 		h.until[key] = until
+	}
+}
+
+// reset 清除某出口的全部冷却（代理地址变更后旧 IP 的封禁不再适用）。
+func (h *Health) reset(routeID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for key := range h.until {
+		if key.route == routeID {
+			delete(h.until, key)
+		}
 	}
 }
 
 // Cooling 出口对该请求剩余的冷却时间（取连接冷却与限流冷却的较大者）。
 func (h *Health) Cooling(siteID, routeID, rawURL string) time.Duration {
-	return max(h.cooling(connectKey(routeID)), h.cooling(limitKey(siteID, routeID, rawURL)))
+	return h.cooling(coolKey{route: routeID}, coolKey{route: routeID, scope: hostOf(rawURL)}, limitKey(siteID, routeID, rawURL))
 }
 
-func connectKey(routeID string) string { return "connect|" + routeID }
-
 // limitKey 限流范围：站点 + 出口 + host + 路径第一段。
-func limitKey(siteID, routeID, rawURL string) string {
+func limitKey(siteID, routeID, rawURL string) coolKey {
 	scope := rawURL
 	if parsed, err := url.Parse(rawURL); err == nil {
 		segment := strings.SplitN(strings.TrimPrefix(parsed.Path, "/"), "/", 2)[0]
 		scope = parsed.Host + "/" + segment
 	}
-	return "limit|" + siteID + "|" + routeID + "|" + scope
+	return coolKey{site: siteID, route: routeID, scope: scope}
+}
+
+func hostOf(rawURL string) string {
+	if parsed, err := url.Parse(rawURL); err == nil && parsed.Host != "" {
+		return parsed.Host
+	}
+	return rawURL
+}
+
+// Browser 真实浏览器回落（如 *fetch.FlareSolverrClient），proxyURL 为出口代理（空为直连）。
+type Browser interface {
+	Do(ctx context.Context, session *fetch.Session, req *fetch.Request, proxyURL string) (*fetch.Response, error)
 }
 
 // Client 按优先级依次尝试出口的 fetch.Client。
@@ -208,6 +284,10 @@ type Client struct {
 	Routes []Route
 	Health *Health
 	Log    *slog.Logger
+	// Browser 非空时遇到质询在同一出口上用浏览器重试；为空则把质询错误原样返回。
+	Browser Browser
+	// RateLimitCooldown 429 未带 Retry-After 时的冷却，0 为 1 小时（见 provider.Meta.RateLimitCooldown）。
+	RateLimitCooldown time.Duration
 }
 
 // Do 实现 fetch.Client。
@@ -234,7 +314,7 @@ func (c *Client) Do(ctx context.Context, session *fetch.Session, req *fetch.Requ
 	var resp *fetch.Response
 	var err error
 	for i, route := range candidates {
-		resp, err = route.Client.Do(ctx, session, req)
+		resp, err = c.attempt(ctx, session, req, route)
 		if err == nil {
 			return resp, nil
 		}
@@ -249,6 +329,23 @@ func (c *Client) Do(ctx context.Context, session *fetch.Session, req *fetch.Requ
 	return resp, err
 }
 
+// attempt 用一个出口发请求；遇到质询且配置了浏览器时在同一出口上过质询。
+// 浏览器能原样表达的请求（GET / 表单 POST、无自定义头）直接用浏览器的响应；其余请求先让浏览器 GET 页面
+// 拿到 cf_clearance 与 UA（写回会话），再用原客户端重发，保留 JSON 与请求头。
+func (c *Client) attempt(ctx context.Context, session *fetch.Session, req *fetch.Request, route Route) (*fetch.Response, error) {
+	resp, err := route.Client.Do(ctx, session, req)
+	if c.Browser == nil || !fetch.IsChallenge(err) {
+		return resp, err
+	}
+	if req.JSON == nil && len(req.Header) == 0 && (req.Method == "" || req.Method == http.MethodGet || req.Method == http.MethodPost) {
+		return c.Browser.Do(ctx, session, req, route.Proxy)
+	}
+	if _, err := c.Browser.Do(ctx, session, &fetch.Request{Method: http.MethodGet, URL: req.URL}, route.Proxy); err != nil {
+		return nil, err
+	}
+	return route.Client.Do(ctx, session, req)
+}
+
 // fallbackReason 判断能否换下一个出口，并按原因冷却当前出口。
 func (c *Client) fallbackReason(ctx context.Context, req *fetch.Request, route Route, err error) (string, bool) {
 	if ctx.Err() != nil {
@@ -257,15 +354,16 @@ func (c *Client) fallbackReason(ctx context.Context, req *fetch.Request, route R
 	var rateLimit *fetch.RateLimitError
 	if errors.As(err, &rateLimit) {
 		// 站点拒绝了请求、未处理：任何方法都可换线。
-		wait := rateLimit.RetryAfter
-		if wait <= 0 {
-			wait = defaultRateLimitCooldown
-		}
+		wait := cmp.Or(rateLimit.RetryAfter, c.RateLimitCooldown, defaultRateLimitCooldown)
 		c.Health.cool(limitKey(c.SiteID, route.ID, req.URL), wait)
 		return "rate limited", true
 	}
 	if isConnectError(err) {
-		c.Health.cool(connectKey(route.ID), connectCooldown)
+		key := coolKey{route: route.ID, scope: hostOf(req.URL)}
+		if proxyFault(route, err) {
+			key.scope = ""
+		}
+		c.Health.cool(key, connectCooldown)
 		return "connect failed", true
 	}
 	if idempotent(req.Method) && isNetworkError(err) {
@@ -295,6 +393,16 @@ func isConnectError(err error) bool {
 	return errors.As(err, &dnsErr)
 }
 
+// proxyFault 连接失败是否出在代理本身（拨号 / 握手代理失败），而非目标站点不可达。
+// 直连出口连不上只说明目标站点挂了，不能让其它站点也绕开直连。
+func proxyFault(route Route, err error) bool {
+	if route.Proxy == "" {
+		return false
+	}
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && (opErr.Op == "proxyconnect" || strings.HasPrefix(opErr.Op, "socks"))
+}
+
 // isNetworkError 传输层错误（含超时、连接被重置），不含 HTTP 状态与质询。
 func isNetworkError(err error) bool {
 	var netErr net.Error
@@ -303,13 +411,4 @@ func isNetworkError(err error) bool {
 	}
 	var urlErr *url.Error
 	return errors.As(err, &urlErr)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

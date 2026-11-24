@@ -6,7 +6,7 @@
 - 关注规则：指定周期 / 配置 / 系统 / 优惠码 / 支付方式 / 价格上限 / 锁单次数
 - 自动锁单：有货即用托管账号下单，生成**未支付**账单（不会自动付款），Telegram / 邮件 / Bark（iOS 推送）通知付款链接
 - 账号托管：账号密码自动登录（会话失效自动重登，验证码走 Solver 链），或粘贴 Cookie（请求头 / Cookie-Editor JSON / cookies.txt）；会话滚动刷新自动回写，失效提醒
-- 验证码：统一 Solver 链 —— 外部 HTTP 求解服务 → FlareSolverr（Cloudflare）→ 人工收件箱（界面粘贴 token / Cookie）
+- 验证码：Turnstile / reCAPTCHA / hCaptcha 走 Solver 链（外部 HTTP 求解服务 → 人工收件箱，界面粘贴 token / Cookie）；Cloudflare 质询由出口层经同一出口的 FlareSolverr 处理
 - 实时：SSE 推送事件、站点状态、订单、待处理验证
 
 ## 架构
@@ -18,7 +18,7 @@ internal/provider       Provider 接口与注册表
   ├─ whmcs              通用 WHMCS（Lagom / standard_cart），按商品组监控，购物车流程锁单
   ├─ usvps24            usvps24.com（Laravel + Inertia），公开 JSON 监控，/cart/checkout 锁单
   └─ htmlutil           表单序列化、金额 / 周期解析、验证码探测
-internal/fetch          抓取抽象：直连 / FlareSolverr / Hybrid（先直连，遇质询回落），Cookie 解析
+internal/fetch          HTTP 客户端（直连或经代理）、FlareSolverr 客户端、质询 / 限流错误分类、Cookie 解析
 internal/egress         出口层：直连与代理统一为「出口」，按优先级使用，连接失败 / 限流时回退并冷却（Pool 接口，可接代理池）
 internal/solver         验证码 Solver 接口：Chain、External、FlareSolverr、ManualBroker
 internal/engine         每站点调度协程（无关注站点按需降频）、快照 diff、关注匹配、锁单执行、账号会话与自动登录、通知、事件总线

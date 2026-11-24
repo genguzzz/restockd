@@ -28,7 +28,7 @@
     "default_fetch_mode": "flaresolverr",
     "min_interval_sec": 20,
     "default_interval_sec": 60,
-    "captcha": ["cloudflare", "recaptcha_v2"],
+    "captcha": ["recaptcha_v2"],
     "config_fields": [
       {"key": "groups", "label": "商品组", "type": "list", "required": true, "placeholder": "cox-isp-vps", "help": "store/<组名> 路径，逗号分隔"},
       {"key": "currency", "label": "货币", "type": "text", "required": false, "default": "CAD"}
@@ -245,7 +245,7 @@ FlareSolverr 请求不经过出口层。设置里删除的代理会自动从各�
   "expires_at": "2026-11-24T07:35:00Z"
 }
 ```
-`kind`：`cloudflare|turnstile|recaptcha_v2|recaptcha_v3|hcaptcha`。
+`kind`：`turnstile|recaptcha_v2|recaptcha_v3|hcaptcha`（Cloudflare 质询由出口层的 FlareSolverr 回退处理，不进收件箱）。
 - `POST /api/challenges/{id}/solve` 请求 `{"token":"可选","cookies_raw":"可选","user_agent":"可选"}`（至少其一）→ `{"ok":true}`
 - `POST /api/challenges/{id}/cancel` → `{"ok":true}`
 

@@ -53,14 +53,7 @@ func (e *Engine) onChallenge(pending solver.Pending) {
 func (e *Engine) TestNotify(ctx context.Context) map[string]string {
 	ctx, cancel := context.WithTimeout(ctx, notifyTimeout)
 	defer cancel()
-	settings := e.Settings()
-	results := map[string]string{}
-	for channel, enabled := range map[string]bool{"telegram": settings.Telegram.Enabled, "email": settings.Email.Enabled, "bark": settings.Bark.Enabled} {
-		results[channel] = "disabled"
-		if enabled {
-			results[channel] = "not configured"
-		}
-	}
+	results := e.hub.Channels() // 各通道 disabled / not_configured / ok，未就绪的通道不会发送
 	for channel, err := range e.hub.Notify(ctx, notify.Message{Title: "restockd 测试通知", Body: "如果你看到这条消息，说明通知通道配置正确。"}) {
 		results[channel] = "ok"
 		if err != nil {

@@ -72,7 +72,7 @@ type Engine struct {
 
 // New 构造引擎；调用 Start 后开始调度。
 func New(options Options) (*Engine, error) {
-	direct, err := fetch.NewDirectClient(httpTimeout, "")
+	direct, err := fetch.NewHTTPClient(httpTimeout, "")
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +80,7 @@ func New(options Options) (*Engine, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	health := egress.NewHealth()
 	engine := &Engine{
 		store:        options.Store,
 		log:          logger,
@@ -87,8 +88,8 @@ func New(options Options) (*Engine, error) {
 		hub:          notify.NewHub(),
 		broker:       solver.NewManualBroker(defaultManualTimeout),
 		publicURL:    strings.TrimRight(options.PublicURL, "/"),
-		egress:       egress.NewRegistry(direct, httpTimeout),
-		egressHealth: egress.NewHealth(),
+		egress:       egress.NewRegistry(direct, httpTimeout, health),
+		egressHealth: health,
 		sites:        map[string]*siteRunner{},
 		sessions:     map[string]*fetch.Session{},
 		loginPauses:  map[string]time.Time{},
@@ -169,7 +170,6 @@ func (e *Engine) ApplySettings(settings Settings) {
 	}
 	if settings.Solver.FlareSolverrURL != "" {
 		flare = fetch.NewFlareSolverrClient(settings.Solver.FlareSolverrURL, 60*time.Second)
-		chain = append(chain, &solver.FlareSolverrSolver{Client: flare})
 	}
 	chain = append(chain, e.broker)
 	e.mu.Lock()
@@ -189,15 +189,16 @@ func (e *Engine) clientFor(site domain.Site) fetch.Client {
 	e.mu.RLock()
 	flare := e.flare
 	e.mu.RUnlock()
-	var client fetch.Client
 	routes, err := e.egress.Routes(site.ID, site.Egress)
 	if err != nil {
-		client = errClient{err: err}
-	} else {
-		client = &egress.Client{SiteID: site.ID, Routes: routes, Health: e.egressHealth, Log: e.log}
+		return errClient{err: err}
+	}
+	client := &egress.Client{SiteID: site.ID, Routes: routes, Health: e.egressHealth, Log: e.log}
+	if meta, ok := provider.Lookup(site.Kind); ok {
+		client.RateLimitCooldown = meta.RateLimitCooldown // 站点 429 无 Retry-After 时的冷却（usvps24 封禁约 6 小时）
 	}
 	if site.FetchMode == domain.FetchFlareSolverr && flare != nil {
-		return &fetch.HybridClient{Primary: client, Fallback: flare}
+		client.Browser = flare
 	}
 	return client
 }

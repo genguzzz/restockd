@@ -151,6 +151,7 @@ func ParseCycle(text string) domain.BillingCycle {
 }
 
 // DetectCaptcha 探测页面中的验证码控件，返回类型与 sitekey。
+// 先按各家控件 class 精确识别；只剩裸 [data-sitekey]（主题自定义容器）时按最常见的 reCAPTCHA v2 处理。
 func DetectCaptcha(doc *goquery.Document) (solver.Kind, string, bool) {
 	if node := doc.Find(".cf-turnstile[data-sitekey]").First(); node.Length() > 0 {
 		return solver.KindTurnstile, node.AttrOr("data-sitekey", ""), true

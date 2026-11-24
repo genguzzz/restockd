@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -67,7 +68,7 @@ func TestSessionScopesPastedDomainCookies(t *testing.T) {
 	}
 }
 
-func TestDirectClientClassifiesChallengeAndRateLimit(t *testing.T) {
+func TestHTTPClientClassifiesChallengeAndRateLimit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/cf":
@@ -75,6 +76,8 @@ func TestDirectClientClassifiesChallengeAndRateLimit(t *testing.T) {
 			_, _ = w.Write([]byte("<html><head><title>Just a moment...</title></head><script src=/cdn-cgi/challenge-platform/x></script></html>"))
 		case "/limited":
 			w.Header().Set("Retry-After", "7")
+			w.WriteHeader(http.StatusTooManyRequests)
+		case "/limited-silent":
 			w.WriteHeader(http.StatusTooManyRequests)
 		case "/echo":
 			if r.Header.Get("User-Agent") != "UA-1" {
@@ -86,7 +89,7 @@ func TestDirectClientClassifiesChallengeAndRateLimit(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	client, err := NewDirectClient(5*time.Second, "")
+	client, err := NewHTTPClient(5*time.Second, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +103,11 @@ func TestDirectClientClassifiesChallengeAndRateLimit(t *testing.T) {
 	if !errors.As(err, &rateLimit) || rateLimit.RetryAfter != 7*time.Second {
 		t.Fatalf("want rate limit 7s, got %v", err)
 	}
+	// 未带 Retry-After 时为 0，由出口层套用自己的默认冷却（不能悄悄变成 1 分钟）。
+	_, err = client.Do(ctx, session, &Request{URL: server.URL + "/limited-silent"})
+	if !errors.As(err, &rateLimit) || rateLimit.RetryAfter != 0 {
+		t.Fatalf("want rate limit without duration, got %v", err)
+	}
 	resp, err := client.Do(ctx, session, &Request{URL: server.URL + "/echo"})
 	if err != nil {
 		t.Fatal(err)
@@ -112,32 +120,51 @@ func TestDirectClientClassifiesChallengeAndRateLimit(t *testing.T) {
 	}
 }
 
-type stubClient struct {
-	calls int
-	err   error
+func TestParseRetryAfter(t *testing.T) {
+	future := time.Now().Add(time.Hour).UTC().Format(http.TimeFormat)
+	for value, want := range map[string]time.Duration{"": 0, "abc": 0, "-5": 0, "120": 2 * time.Minute} {
+		if got := parseRetryAfter(value); got != want {
+			t.Fatalf("%q: got %s want %s", value, got, want)
+		}
+	}
+	if got := parseRetryAfter(future); got < 59*time.Minute || got > time.Hour {
+		t.Fatalf("http date: got %s", got)
+	}
 }
 
-func (s *stubClient) Do(context.Context, *Session, *Request) (*Response, error) {
-	s.calls++
-	return &Response{StatusCode: 200}, s.err
+// 空代理即直连：不能因为进程环境里有 HTTPS_PROXY 就悄悄换出口。
+func TestHTTPClientIgnoresEnvProxy(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
+	client, err := NewHTTPClient(time.Second, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.transport.(*http.Transport).Proxy != nil {
+		t.Fatal("empty proxy url must not read environment proxies")
+	}
 }
 
-func TestHybridFallsBackOnlyOnChallenge(t *testing.T) {
-	session, _ := NewSession("https://x.test", nil, "")
-	primary := &stubClient{err: &ChallengeError{Kind: "cloudflare"}}
-	fallback := &stubClient{}
-	hybrid := &HybridClient{Primary: primary, Fallback: fallback}
-	if _, err := hybrid.Do(context.Background(), session, &Request{}); err != nil {
-		t.Fatalf("fallback should succeed: %v", err)
+func TestFlareSolverrUsesRouteProxy(t *testing.T) {
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"status":"ok","solution":{"url":"https://shop.test/","status":200,"response":"ok","userAgent":"UA-B","cookies":[{"name":"cf_clearance","value":"cc"}]}}`))
+	}))
+	defer server.Close()
+	client := NewFlareSolverrClient(server.URL, time.Second)
+	session, _ := NewSession("https://shop.test", nil, "")
+	if _, err := client.Do(context.Background(), session, &Request{URL: "https://shop.test/"}, "socks5://u:p@127.0.0.1:1080"); err != nil {
+		t.Fatal(err)
 	}
-	if fallback.calls != 1 {
-		t.Fatalf("fallback calls %d", fallback.calls)
+	proxy, _ := got["proxy"].(map[string]any)
+	if proxy["url"] != "socks5://127.0.0.1:1080" || proxy["username"] != "u" || proxy["password"] != "p" {
+		t.Fatalf("proxy not forwarded: %v", got["proxy"])
 	}
-	primary.err = &HTTPError{StatusCode: 500}
-	if _, err := hybrid.Do(context.Background(), session, &Request{}); err == nil {
-		t.Fatal("non-challenge error must not fall back")
+	if session.Cookie("cf_clearance") != "cc" || session.UserAgent() != "UA-B" {
+		t.Fatal("browser cookies / UA not written back to session")
 	}
-	if fallback.calls != 1 {
-		t.Fatalf("fallback called for non-challenge error")
+	if _, err := client.Do(context.Background(), session, &Request{Method: http.MethodPost, URL: "https://shop.test/", JSON: []byte(`{}`)}, ""); err == nil {
+		t.Fatal("json body must be rejected")
 	}
 }

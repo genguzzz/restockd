@@ -127,41 +127,44 @@ func newEnv(t *testing.T, fake *fakeSite, slv solver.Solver) (*Provider, provide
 	t.Cleanup(server.Close)
 	site := domain.Site{ID: "usvps24", Name: "usvps24", Kind: Kind, BaseURL: server.URL}
 	instance, _ := New(site)
-	client, _ := fetch.NewDirectClient(5*time.Second, "")
+	client, _ := fetch.NewHTTPClient(5*time.Second, "")
 	session, _ := fetch.NewSession(server.URL, nil, "")
 	return instance.(*Provider), provider.Env{Site: site, Client: client, Session: session, Solver: slv, Account: &domain.Account{ID: "a1"}}
 }
 
-func TestLoadCheckoutUsesInertiaJSONAfterFirstLoad(t *testing.T) {
+// 每次读首屏拿当前版本：站点发版后不会因为旧版本 409。
+func TestLoadCheckoutReturnsCurrentVersion(t *testing.T) {
 	fake := newFakeSite(t, false)
 	p, env := newEnv(t, fake, nil)
-	for i := 0; i < 3; i++ {
-		props, err := p.loadCheckout(context.Background(), env)
+	for _, version := range []string{fake.version, "new-build"} {
+		fake.version = version
+		fake.page["version"] = version
+		props, got, err := p.loadCheckout(context.Background(), env)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(props.Products) != 11 {
-			t.Fatalf("want 11 products, got %d", len(props.Products))
+		if got != version || len(props.Products) != 11 {
+			t.Fatalf("want version %q and 11 products, got %q / %d", version, got, len(props.Products))
 		}
-	}
-	if fake.htmlHits != 1 || fake.jsonHits != 2 {
-		t.Fatalf("want 1 html + 2 json loads, got html=%d json=%d", fake.htmlHits, fake.jsonHits)
 	}
 }
 
-func TestLoadCheckoutRecoversFromVersionChange(t *testing.T) {
-	fake := newFakeSite(t, false)
-	p, env := newEnv(t, fake, nil)
-	if _, err := p.loadCheckout(context.Background(), env); err != nil {
-		t.Fatal(err)
+func TestParseCheckoutResultLocations(t *testing.T) {
+	quote := domain.Quote{}
+	base := "https://usvps24.com"
+	respWith := func(status int, location string) *fetch.Response {
+		return &fetch.Response{StatusCode: status, Header: http.Header{"X-Inertia-Location": {location}}}
 	}
-	fake.version = "new-build"
-	fake.page["version"] = "new-build"
-	if _, err := p.loadCheckout(context.Background(), env); err != nil {
-		t.Fatalf("409 should trigger html reload: %v", err)
+	if result, err := parseCheckoutResult(respWith(http.StatusConflict, "/invoices/42"), base, quote); err != nil || result.InvoiceID != "42" || result.PayURL != base+"/invoices/42" {
+		t.Fatalf("invoice redirect: %+v %v", result, err)
 	}
-	if p.getVersion() != "new-build" {
-		t.Fatalf("version not refreshed: %s", p.getVersion())
+	if result, err := parseCheckoutResult(respWith(http.StatusConflict, "https://pay.example.com/checkout?id=1"), base, quote); err != nil || result.PayURL != "https://pay.example.com/checkout?id=1" {
+		t.Fatalf("external payment redirect: %+v %v", result, err)
+	}
+	for _, location := range []string{base + "/cart/checkout", "/login", base + "/invoices/abc"} {
+		if result, err := parseCheckoutResult(respWith(http.StatusConflict, location), base, quote); err == nil {
+			t.Fatalf("%s must not count as a placed order: %+v", location, result)
+		}
 	}
 }
 
@@ -186,7 +189,7 @@ func TestCatalogOnlyHitsStockAPI(t *testing.T) {
 func TestCatalogEnrichedAfterOrderPageLoad(t *testing.T) {
 	fake := newFakeSite(t, false)
 	p, env := newEnv(t, fake, nil)
-	if _, err := p.loadCheckout(context.Background(), env); err != nil {
+	if _, _, err := p.loadCheckout(context.Background(), env); err != nil {
 		t.Fatal(err)
 	}
 	catalog, err := p.Catalog(context.Background(), env)

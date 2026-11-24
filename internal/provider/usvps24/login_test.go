@@ -69,7 +69,7 @@ func newLoginEnv(t *testing.T, server *httptest.Server) (*Provider, provider.Env
 	t.Helper()
 	site := domain.Site{ID: "usvps24", Name: "usvps24", Kind: Kind, BaseURL: server.URL}
 	instance, _ := New(site)
-	client, _ := fetch.NewDirectClient(5*time.Second, "")
+	client, _ := fetch.NewHTTPClient(5*time.Second, "")
 	session, _ := fetch.NewSession(server.URL, nil, "")
 	slv := &tokenSolver{}
 	return instance.(*Provider), provider.Env{Site: site, Client: client, Session: session, Solver: slv, Account: &domain.Account{ID: "a1"}}, slv

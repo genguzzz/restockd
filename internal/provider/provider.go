@@ -1,6 +1,6 @@
 // Package provider 定义主机商适配器的统一接口与注册表。
 //
-// 新增一个主机商 = 新建子包实现 Provider（必选）与 Orderer / SessionChecker（可选），并在 init 中 Register。
+// 新增一个主机商 = 新建子包实现 Provider（必选）与 Orderer / SessionChecker / Authenticator（可选），并在 init 中 Register。
 // 同一种站点系统（如 WHMCS）只需实现一次，不同商家通过 Site.Config 区分（如商品组、主题差异）。
 package provider
 
@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/genguzzz/restockd/internal/domain"
 	"github.com/genguzzz/restockd/internal/fetch"
@@ -79,6 +81,8 @@ type Meta struct {
 	ConfigFields    []Field          `json:"config_fields"`
 	// Captcha 下单环节可能出现的验证类型，前端提示用户配置对应 Solver。
 	Captcha []solver.Kind `json:"captcha,omitempty"`
+	// RateLimitCooldown 站点 429 未带 Retry-After 时出口的冷却时间，0 为出口层默认（1 小时）。
+	RateLimitCooldown time.Duration `json:"-"`
 }
 
 // Env 一次调用的运行环境，由引擎组装。
@@ -89,6 +93,39 @@ type Env struct {
 	Account *domain.Account
 	Solver  solver.Solver
 	Log     *slog.Logger
+}
+
+// AccountID 当前账号 ID，匿名为空。
+func (env Env) AccountID() string {
+	if env.Account == nil {
+		return ""
+	}
+	return env.Account.ID
+}
+
+// Solve 交给 env.Solver 求解验证码：补上站点与账号，求解结果附带的 Cookie / UA 写回会话。
+func (env Env) Solve(ctx context.Context, challenge solver.Challenge) (solver.Solution, error) {
+	if env.Solver == nil {
+		return solver.Solution{}, fmt.Errorf("solve %s: no solver configured", challenge.Kind)
+	}
+	challenge.SiteID = env.Site.ID
+	challenge.AccountID = env.AccountID()
+	solution, err := env.Solver.Solve(ctx, challenge)
+	if err != nil {
+		return solver.Solution{}, fmt.Errorf("solve %s: %w", challenge.Kind, err)
+	}
+	if env.Session != nil {
+		if len(solution.Cookies) > 0 {
+			env.Session.SetCookies(solution.Cookies)
+		}
+		env.Session.SetUserAgent(solution.UserAgent)
+	}
+	return solution, nil
+}
+
+// SplitList 解析 FieldList 配置值：逗号、分号、空白（含换行）分隔，忽略空项。
+func SplitList(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ';' || unicode.IsSpace(r) })
 }
 
 // Provider 必选能力：拉取商品目录（含库存、价格、配置项）。

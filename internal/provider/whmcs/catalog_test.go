@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PuerkitoBio/goquery"
+
 	"github.com/genguzzz/restockd/internal/domain"
 )
 
@@ -154,5 +156,47 @@ func TestParseGroupFriendlyURLAndChineseCycle(t *testing.T) {
 	}
 	if c := byID["30"]; c.Stock.Status != domain.StockIn || c.Prices[0].Cycle != domain.CycleMonthly {
 		t.Fatalf("套餐C: want in stock monthly, got %+v %+v", c.Stock, c.Prices)
+	}
+}
+
+func parseCard(t *testing.T, card string) *goquery.Selection {
+	t.Helper()
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(card))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc.Find("body").Children().First()
+}
+
+// 没有数量标签、按钮仍可点，但徽标写着缺货：不能报有货（否则会触发自动锁单）。
+func TestParseStockOutOfStockBadge(t *testing.T) {
+	for _, card := range []string{
+		`<div id="product7"><span class="label label-danger">Out of Stock</span><a class="btn-order-now" href="/cart.php?a=add&pid=7">Order</a></div>`,
+		`<div id="product7"><a class="btn btn-order-now" href="/store/g/x">已售罄</a></div>`,
+		`<div id="product7"><span class="badge">缺货</span><a href="cart.php?a=add&pid=7">购买</a></div>`,
+	} {
+		stock := parseStock(parseCard(t, card))
+		if stock.Status != domain.StockOut || stock.Qty == nil || *stock.Qty != 0 {
+			t.Fatalf("%s: want out of stock qty 0, got %+v", card, stock)
+		}
+	}
+	disabled := parseStock(parseCard(t, `<div id="product7"><a class="btn-order-now disabled" href="#">Order</a></div>`))
+	if disabled.Status != domain.StockOut || disabled.Qty == nil || *disabled.Qty != 0 {
+		t.Fatalf("disabled button must be out of stock with qty 0, got %+v", disabled)
+	}
+	if in := parseStock(parseCard(t, `<div id="product7"><a class="btn-order-now" href="/store/g/x">Order Now</a></div>`)); in.Status != domain.StockIn {
+		t.Fatalf("enabled button without out-of-stock text means in stock, got %+v", in)
+	}
+}
+
+func TestParseSpecsTable(t *testing.T) {
+	card := parseCard(t, `<div id="product1"><div class="package-content"><ul>
+<li>2 vCPU / 2 GB 内存</li><li>20 GB NVMe 硬盘</li><li>1 TB 流量 @ 1Gbps</li><li>Unlimited Traffic</li><li>KVM &amp; 原生 IP</li></ul></div></div>`)
+	specs := parseSpecs(card)
+	if specs.CPU != "2" || specs.RAMMB != 2048 || specs.DiskGB != 20 || specs.TrafficGB != 1000 || specs.BandwidthMbps != 1000 {
+		t.Fatalf("every unset field must be tried on every line: %+v", specs)
+	}
+	if specs.Extra["traffic"] != "Unlimited Traffic" || specs.Extra["note1"] != "KVM & 原生 IP" || len(specs.Extra) != 2 {
+		t.Fatalf("only unmatched lines go to extra (html unescaped): %+v", specs.Extra)
 	}
 }
