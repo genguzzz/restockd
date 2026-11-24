@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>购物车 - CloudSilk</title>
+    <!-- Styling -->
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+<link href="/templates/twenty-one/css/all.min.css?v=11bc43" rel="stylesheet">
+<link href="/templates/twenty-one/css/theme.min.css?v=11bc43" rel="stylesheet">
+<link href="/assets/css/fontawesome-all.min.css" rel="stylesheet">
+
+<script>
+    var csrfToken = '2a6cc4bb878073528bc235a4d38a1a873f91d707',
+        markdownGuide = 'Markdown 使用教程',
+        locale = 'en',
+        saved = '已保存',
+        saving = '自动保存',
+        whmcsBaseUrl = "",
+        requiredText = '必填',
+        recaptchaSiteKey = "";
+</script>
+<script src="/templates/twenty-one/js/scripts.min.js?v=11bc43"></script>
+
+    
+</head>
+<body class="primary-bg-color" data-phone-cc-input="1">
+
+    
+
+    <header id="header" class="header">
+        
+        <div class="navbar navbar-light">
+            <div class="container">
+                <a class="navbar-brand mr-3" href="/index.php">
+                                            CloudSilk
+                                    </a>
+
+                <form method="post" action="/knowledgebase/search" class="form-inline ml-auto">
+<input type="hidden" name="token" value="0000000000000000000000000000000000000000" />
+                    <div class="input-group search d-none d-xl-flex">
+                        <div class="input-group-prepend">
+                            <button class="btn btn-default" type="submit">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                        <input class="form-control appended-form-control font-weight-light" type="text" name="search" placeholder="搜索知识库...">
+                    </div>
+                </form>
+
+                <ul class="navbar-nav toolbar">
+                    <li class="nav-item ml-3">
+                        <a class="btn nav-link cart-btn" href="/cart.php?a=view">
+                            <i class="far fa-shopping-cart fa-fw"></i>
+                            <span class="badge badge-info">0</span>
+                            <span class="sr-only">购物车</span>
+                        </a>
+                    </li>
+                    <li class="nav-item ml-3 d-xl-none">
+                        <button class="btn nav-link" type="button" data-toggle="collapse" data-target="#mainNavbar">
+                            <span class="fas fa-bars fa-fw"></span>
+                        </button>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        <div class="navbar navbar-expand-xl main-navbar-wrapper">
+            <div class="container">
+                <div class="collapse navbar-collapse" id="mainNavbar">
+                    <form method="post" action="/knowledgebase/search" class="d-xl-none">
+<input type="hidden" name="token" value="0000000000000000000000000000000000000000" />
+                        <div class="input-group search w-100 mb-2">
+                            <div class="input-group-prepend">
+                                <button class="btn btn-default" type="submit">
+                                    <i class="fas fa-search"></i>
+                                </button>
+                            </div>
+                            <input class="form-control prepended-form-control" type="text" name="search" placeholder="搜索知识库...">
+                        </div>
+                    </form>
+                    <ul id="nav" class="navbar-nav mr-auto">
+                            <li menuItemName="Home" class="d-block no-collapse" id="Primary_Navbar-Home">
+        <a class="pr-4" href="/index.php">
+                        用户中心
+                    </a>
+            </li>
+    <li menuItemName="Store" class="d-block dropdown no-collapse" id="Primary_Navbar-Store">
+        <a class="pr-4 dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" href="#">
+                        在线购买
+                    </a>
+                    <ul class="dropdown-menu">
+                                                <li menuItemName="Browse Products Services" class="dropdown-item" id="Primary_Navbar-Store-Browse_Products_Services">
+                        <a href="/store" class="dropdown-item px-2 py-0">
+                                                        浏览全部
+                                                    </a>
+                    </li>
+                                                                <div class="dropdown-divider"></div>
+                                                                <li menuItemName="德国法兰克福大陆精品优化BGP(9929)" class="dropdown-item" id="Primary_Navbar-Store-德国法兰克福大陆精品优化BGP(9929)">
+                        <a href="/store/de-guo-fa-lan-ke-fu-da-lu-jing-pin-you-hua-bgp" class="dropdown-item px-2 py-0">
+                                                        德国法兰克福大陆精品优化BGP(9929)
+                                                    </a>
+                    </li>
+                                                                <li menuItemName="美国圣何塞-大陆优化BGP（4837）" class="dropdown-item" id="Primary_Navbar-Store-美国圣何塞-大陆优化BGP（4837）">
+                        <a href="/store/mei-guo-sheng-he-sai-da-lu-you-hua-bgp4837" class="dropdown-item px-2 py-0">
+                                                        美国圣何塞-大陆优化BGP（4837）
+                                                    </a>
+                    </li>
+                                                                <li menuItemName="美国圣何塞-精品大陆优化BGP（9929）" class="dropdown-item" id="Primary_Navbar-Store-美国圣何塞-精品大陆优化BGP（9929）">
+                        <a href="/store/mei-guo-sheng-he-sai-jing-pin-da-lu-you-hua-bgp9929" class="dropdown-item px-2 py-0">
+                                                        美国圣何塞-精品大陆优化BGP（9929）
+                                                    </a>
+                    </li>
+                                        </ul>
+            </li>
+    <li menuItemName="Announcements" class="d-block" id="Primary_Navbar-Announcements">
+        <a class="pr-4" href="/announcements">
+                        公告信息
+                    </a>
+            </li>
+    <li menuItemName="Knowledgebase" class="d-block" id="Primary_Navbar-Knowledgebase">
+        <a class="pr-4" href="/knowledgebase">
+                        帮助中心
+                    </a>
+            </li>
+    <li menuItemName="Network Status" class="d-block" id="Primary_Navbar-Network_Status">
+        <a class="pr-4" href="/serverstatus.php">
+                        服务监控
+                    </a>
+            </li>
+    <li menuItemName="Affiliates" class="d-block" id="Primary_Navbar-Affiliates">
+        <a class="pr-4" href="/affiliates.php">
+                        用户推广
+                    </a>
+            </li>
+    <li menuItemName="Contact Us" class="d-block" id="Primary_Navbar-Contact_Us">
+        <a class="pr-4" href="/contact.php">
+                        联系我们
+                    </a>
+            </li>
+    <li class="d-none dropdown collapsable-dropdown">
+        <a class="dropdown-toggle" href="#" id="navbarDropdownMenu" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            更多
+        </a>
+        <ul class="collapsable-dropdown-menu dropdown-menu" aria-labelledby="navbarDropdownMenu">
+        </ul>
+    </li>
+                    </ul>
+                    <ul class="navbar-nav ml-auto">
+                            <li menuItemName="Account" class="d-block no-collapse dropdown no-collapse" id="Secondary_Navbar-Account">
+        <a class=" dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" href="#">
+                        账户管理
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-right">
+                                                <li menuItemName="Login" class="dropdown-item" id="Secondary_Navbar-Account-Login">
+                        <a href="/clientarea.php" class="dropdown-item px-2 py-0">
+                                                        用户登录
+                                                    </a>
+                    </li>
+                                                                <li menuItemName="Register" class="dropdown-item" id="Secondary_Navbar-Account-Register">
+                        <a href="/register.php" class="dropdown-item px-2 py-0">
+                                                        注册账户
+                                                    </a>
+                    </li>
+                                                                <div class="dropdown-divider"></div>
+                                                                <li menuItemName="Forgot Password?" class="dropdown-item" id="Secondary_Navbar-Account-Forgot_Password?">
+                        <a href="/password/reset" class="dropdown-item px-2 py-0">
+                                                        忘记密码？
+                                                    </a>
+                    </li>
+                                        </ul>
+            </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    
+    <nav class="master-breadcrumb" aria-label="breadcrumb">
+        <div class="container">
+            <ol class="breadcrumb">
+            <li class="breadcrumb-item active" aria-current="page">
+                        购物车
+                    </li>
+    </ol>
+        </div>
+    </nav>
+
+        
+    
+    <section id="main-body">
+        <div class="container">
+            <div class="row">
+
+                        <div class="col-12 primary-content">
+
+
+<link rel="stylesheet" type="text/css" href="/templates/orderforms/standard_cart/css/all.min.css?v=11bc43" />
+<script type="text/javascript" src="/templates/orderforms/standard_cart/js/scripts.min.js?v=11bc43"></script>
+<div id="order-standard_cart">
+    <div class="row">
+        <div class="cart-sidebar sidebar">
+                <div menuItemName="Categories" class="panel card card-sidebar mb-3 panel-sidebar">
+        <div class="panel-heading card-header">
+            <h3 class="panel-title">
+                                    <i class="fas fa-shopping-cart"></i>&nbsp;
+                
+                分类
+
+                
+                <i class="fas fa-chevron-up card-minimise panel-minimise pull-right float-right"></i>
+            </h3>
+        </div>
+
+        
+                    <div class="list-group collapsable-card-body">
+                                                            <a menuItemName="德国法兰克福大陆精品优化BGP(9929)" href="/store/de-guo-fa-lan-ke-fu-da-lu-jing-pin-you-hua-bgp" class="list-group-item list-group-item-action active" id="Secondary_Sidebar-Categories-德国法兰克福大陆精品优化BGP(9929)">
+                            
+                            德国法兰克福大陆精品优化BGP(9929)
+
+                                                    </a>
+                                                                                <a menuItemName="美国圣何塞-大陆优化BGP（4837）" href="/store/mei-guo-sheng-he-sai-da-lu-you-hua-bgp4837" class="list-group-item list-group-item-action" id="Secondary_Sidebar-Categories-美国圣何塞-大陆优化BGP（4837）">
+                            
+                            美国圣何塞-大陆优化BGP（4837）
+
+                                                    </a>
+                                                                                <a menuItemName="美国圣何塞-精品大陆优化BGP（9929）" href="/store/mei-guo-sheng-he-sai-jing-pin-da-lu-you-hua-bgp9929" class="list-group-item list-group-item-action" id="Secondary_Sidebar-Categories-美国圣何塞-精品大陆优化BGP（9929）">
+                            
+                            美国圣何塞-精品大陆优化BGP（9929）
+
+                                                    </a>
+                                                </div>
+        
+            </div>
+
+        <div menuItemName="Actions" class="panel card card-sidebar mb-3 panel-sidebar">
+        <div class="panel-heading card-header">
+            <h3 class="panel-title">
+                                    <i class="fas fa-plus"></i>&nbsp;
+                
+                操作
+
+                
+                <i class="fas fa-chevron-up card-minimise panel-minimise pull-right float-right"></i>
+            </h3>
+        </div>
+
+        
+                    <div class="list-group collapsable-card-body">
+                                                            <a menuItemName="View Cart" href="/cart.php?a=view" class="list-group-item list-group-item-action" id="Secondary_Sidebar-Actions-View_Cart">
+                                                            <i class="fas fa-shopping-cart fa-fw"></i>&nbsp;
+                            
+                            查看购物车
+
+                                                    </a>
+                                                </div>
+        
+            </div>
+
+            </div>
+        <div class="cart-body">
+
+            <div class="header-lined">
+                <h1 class="font-size-36">
+                                            德国法兰克福大陆精品优化BGP(9929)
+                                    </h1>
+                                    <p>海外回程为自有BGP网络，中国大陆回程为法兰克福精品回国带宽 三网直连 德国法兰克福-精品大陆优化BGP Looking glass：http://82.115.30.10/ （只是测试ip 并不代表分配的ip就是这个段的 也不保证是原生ip 谢绝以不是原生ip申请退款 Tos也写了不允许退款）</p>
+                            </div>
+            
+            <div class="sidebar-collapsed">
+
+            <div class="panel card panel-default">
+                <div class="m-0 panel-heading card-header">
+        <h3 class="panel-title">
+                            <i class="fas fa-shopping-cart"></i>&nbsp;
+            
+            分类
+
+                    </h3>
+    </div>
+
+    <div class="panel-body card-body">
+        <form role="form">
+            <select class="form-control custom-select" onchange="selectChangeNavigate(this)">
+                                                    <option menuItemName="德国法兰克福大陆精品优化BGP(9929)" value="/store/de-guo-fa-lan-ke-fu-da-lu-jing-pin-you-hua-bgp" class="list-group-item" selected="selected">
+                        德国法兰克福大陆精品优化BGP(9929)
+
+                                            </option>
+                                                                                                    <option menuItemName="美国圣何塞-大陆优化BGP（4837）" value="/store/mei-guo-sheng-he-sai-da-lu-you-hua-bgp4837" class="list-group-item" >
+                        美国圣何塞-大陆优化BGP（4837）
+
+                                            </option>
+                                                        <option menuItemName="美国圣何塞-精品大陆优化BGP（9929）" value="/store/mei-guo-sheng-he-sai-jing-pin-da-lu-you-hua-bgp9929" class="list-group-item" >
+                        美国圣何塞-精品大陆优化BGP（9929）
+
+                                            </option>
+                                                                </select>
+        </form>
+    </div>
+
+            </div>
+            <div class="panel card panel-default">
+                <div class="m-0 panel-heading card-header">
+        <h3 class="panel-title">
+                            <i class="fas fa-plus"></i>&nbsp;
+            
+            操作
+
+                    </h3>
+    </div>
+
+    <div class="panel-body card-body">
+        <form role="form">
+            <select class="form-control custom-select" onchange="selectChangeNavigate(this)">
+                                                    <option menuItemName="View Cart" value="/cart.php?a=view" class="list-group-item" >
+                        查看购物车
+
+                                            </option>
+                                                                        <option value="" class="list-group-item" selected=""selected>- 选择其它分类 -</option>
+                            </select>
+        </form>
+    </div>
+
+            </div>
+    
+    
+</div>
+
+            <div class="products" id="products">
+                <div class="row row-eq-height">
+                                                                <div class="col-md-6">
+                        <div class="product clearfix" id="product28">
+                            <header>
+                                <span id="product28-name">德国-精品大陆优化BGP-套餐A</span>
+                                                                    <span class="qty">
+                                            0 可用
+                                        </span>
+                                                            </header>
+                            <div class="product-desc">
+                                                                    <p id="product28-description">
+                                        <div class="list-info"><i class="icon-cpu"></i> <span class="spec">CPU</span><br> <span>1核心</span></div><br><br />
+<div class="list-info"><i class="icon-ram"></i> <span class="spec">RAM</span><br> <span>1024MB内存</span></div><br><br />
+<div class="list-info"><i class="icon-drives"></i> <span class="spec">DISK</span><br> <span>10G SSD硬盘</span></div><br><br />
+<div class="list-info"><i class="icon-speed"></i> <span class="spec">DISK</span><br> <span>500G流量(1000Mbps带宽) </span></div><br><br />
+<div class="list-info"><i class="icon-code"></i> <span class="spec">Price</span><br> <span>299.99一年 =</span></div><br><br />
+
+                                    </p>
+                                                                <ul>
+                                                                    </ul>
+                            </div>
+                            <footer>
+                                <div class="product-pricing" id="product28-price">
+                                                                                                                    <span class="price">￥299.99CNY</span>
+                                        <br />
+                                                                                    每年
+                                                                                <br>
+                                                                                                            </div>
+                                <a href="/store/de-guo-fa-lan-ke-fu-da-lu-jing-pin-you-hua-bgp/de-guo-jing-pin-da-lu-you-hua-bgptao-can-a" class="btn btn-success btn-sm" id="product28-order-button">
+                                    <i class="fas fa-shopping-cart"></i>
+                                    立即订购
+                                </a>
+                            </footer>
+                        </div>
+                    </div>
+                                                                                    <div class="col-md-6">
+                        <div class="product clearfix" id="product29">
+                            <header>
+                                <span id="product29-name">德国-精品大陆优化BGP-套餐B</span>
+                                                            </header>
+                            <div class="product-desc">
+                                                                    <p id="product29-description">
+                                        <div class="list-info"><i class="icon-cpu"></i> <span class="spec">CPU</span><br> <span>1核心</span></div><br><br />
+<div class="list-info"><i class="icon-ram"></i> <span class="spec">RAM</span><br> <span>1024MB内存</span></div><br><br />
+<div class="list-info"><i class="icon-drives"></i> <span class="spec">DISK</span><br> <span>10G SSD硬盘</span></div><br><br />
+<div class="list-info"><i class="icon-speed"></i> <span class="spec">DISK</span><br> <span>1000G流量(1000Mbps带宽) </span></div><br><br />
+<div class="list-info"><i class="icon-code"></i> <span class="spec">Price</span><br> <span>520一年 210一季度 89一月</span></div><br><br />
+
+                                    </p>
+                                                                <ul>
+                                                                    </ul>
+                            </div>
+                            <footer>
+                                <div class="product-pricing" id="product29-price">
+                                                                                                                    <span class="price">￥520.00CNY</span>
+                                        <br />
+                                                                                    每年
+                                                                                <br>
+                                                                                                            </div>
+                                <a href="/store/de-guo-fa-lan-ke-fu-da-lu-jing-pin-you-hua-bgp/de-guo-jing-pin-da-lu-you-hua-bgptao-can-b" class="btn btn-success btn-sm" id="product29-order-button">
+                                    <i class="fas fa-shopping-cart"></i>
+                                    立即订购
+                                </a>
+                            </footer>
+                        </div>
+                    </div>
+                                    </div>
+                <div class="row row-eq-height">
+                                                                                    <div class="col-md-6">
+                        <div class="product clearfix" id="product30">
+                            <header>
+                                <span id="product30-name">德国-精品大陆优化BGP-套餐C</span>
+                                                            </header>
+                            <div class="product-desc">
+                                                                    <p id="product30-description">
+                                        <div class="list-info"><i class="icon-cpu"></i> <span class="spec">CPU</span><br> <span>2核心</span></div><br><br />
+<div class="list-info"><i class="icon-ram"></i> <span class="spec">RAM</span><br> <span>2048MB内存</span></div><br><br />
+<div class="list-info"><i class="icon-drives"></i> <span class="spec">DISK</span><br> <span>20G SSD硬盘</span></div><br><br />
+<div class="list-info"><i class="icon-speed"></i> <span class="spec">DISK</span><br> <span>2000G流量(1000Mbps带宽) </span></div><br><br />
+<div class="list-info"><i class="icon-code"></i> <span class="spec">Price</span><br> <span>899.99一年 339.99一季度 149一月</span></div><br><br />
+
+                                    </p>
+                                                                <ul>
+                                                                    </ul>
+                            </div>
+                            <footer>
+                                <div class="product-pricing" id="product30-price">
+                                                                                                                    <span class="price">￥149.00CNY</span>
+                                        <br />
+                                                                                    每月
+                                                                                <br>
+                                                                                                            </div>
+                                <a href="/store/de-guo-fa-lan-ke-fu-da-lu-jing-pin-you-hua-bgp/de-guo-jing-pin-da-lu-you-hua-bgptao-can-c" class="btn btn-success btn-sm" id="product30-order-button">
+                                    <i class="fas fa-shopping-cart"></i>
+                                    立即订购
+                                </a>
+                            </footer>
+                        </div>
+                    </div>
+                                                                                    <div class="col-md-6">
+                        <div class="product clearfix" id="product31">
+                            <header>
+                                <span id="product31-name">德国-精品大陆优化BGP-套餐D</span>
+                                                            </header>
+                            <div class="product-desc">
+                                                                    <p id="product31-description">
+                                        <div class="list-info"><i class="icon-cpu"></i> <span class="spec">CPU</span><br> <span>2核心</span></div><br><br />
+<div class="list-info"><i class="icon-ram"></i> <span class="spec">RAM</span><br> <span>4096MB内存</span></div><br><br />
+<div class="list-info"><i class="icon-drives"></i> <span class="spec">DISK</span><br> <span>20G SSD硬盘</span></div><br><br />
+<div class="list-info"><i class="icon-speed"></i> <span class="spec">DISK</span><br> <span>4000G流量(1000Mbps带宽) </span></div><br><br />
+<div class="list-info"><i class="icon-code"></i> <span class="spec">Price</span><br> <span>319一月 719一季 1899.99一年</span></div><br><br />
+
+                                    </p>
+                                                                <ul>
+                                                                    </ul>
+                            </div>
+                            <footer>
+                                <div class="product-pricing" id="product31-price">
+                                                                                                                    <span class="price">￥319.00CNY</span>
+                                        <br />
+                                                                                    每月
+                                                                                <br>
+                                                                                                            </div>
+                                <a href="/store/de-guo-fa-lan-ke-fu-da-lu-jing-pin-you-hua-bgp/de-guo-jing-pin-da-lu-you-hua-bgptao-can-d" class="btn btn-success btn-sm" id="product31-order-button">
+                                    <i class="fas fa-shopping-cart"></i>
+                                    立即订购
+                                </a>
+                            </footer>
+                        </div>
+                    </div>
+                                    </div>
+                <div class="row row-eq-height">
+                                                                                    <div class="col-md-6">
+                        <div class="product clearfix" id="product32">
+                            <header>
+                                <span id="product32-name">德国-精品大陆优化BGP-套餐E</span>
+                                                            </header>
+                            <div class="product-desc">
+                                                                    <p id="product32-description">
+                                        <div class="list-info"><i class="icon-cpu"></i> <span class="spec">CPU</span><br> <span>4核心</span></div><br><br />
+<div class="list-info"><i class="icon-ram"></i> <span class="spec">RAM</span><br> <span>4096MB内存</span></div><br><br />
+<div class="list-info"><i class="icon-drives"></i> <span class="spec">DISK</span><br> <span>40G SSD硬盘</span></div><br><br />
+<div class="list-info"><i class="icon-speed"></i> <span class="spec">DISK</span><br> <span>6000G流量(1000Mbps带宽) </span></div><br><br />
+<div class="list-info"><i class="icon-code"></i> <span class="spec">Price</span><br> <span>499.99一月</span></div><br><br />
+
+                                    </p>
+                                                                <ul>
+                                                                    </ul>
+                            </div>
+                            <footer>
+                                <div class="product-pricing" id="product32-price">
+                                                                                                                    <span class="price">￥499.99CNY</span>
+                                        <br />
+                                                                                    每月
+                                                                                <br>
+                                                                                                            </div>
+                                <a href="/store/de-guo-fa-lan-ke-fu-da-lu-jing-pin-you-hua-bgp/de-guo-jing-pin-da-lu-you-hua-bgptao-can-e" class="btn btn-success btn-sm" id="product32-order-button">
+                                    <i class="fas fa-shopping-cart"></i>
+                                    立即订购
+                                </a>
+                            </footer>
+                        </div>
+                    </div>
+                                                                                    <div class="col-md-6">
+                        <div class="product clearfix" id="product33">
+                            <header>
+                                <span id="product33-name">德国-精品大陆优化BGP-套餐F</span>
+                                                            </header>
+                            <div class="product-desc">
+                                                                    <p id="product33-description">
+                                        <div class="list-info"><i class="icon-cpu"></i> <span class="spec">CPU</span><br> <span>4核心</span></div><br><br />
+<div class="list-info"><i class="icon-ram"></i> <span class="spec">RAM</span><br> <span>8192MB内存</span></div><br><br />
+<div class="list-info"><i class="icon-drives"></i> <span class="spec">DISK</span><br> <span>80G SSD硬盘</span></div><br><br />
+<div class="list-info"><i class="icon-speed"></i> <span class="spec">DISK</span><br> <span>8000G流量(1000Mbps带宽) </span></div><br><br />
+<div class="list-info"><i class="icon-code"></i> <span class="spec">Price</span><br> <span>799一月</span></div><br><br />
+
+                                    </p>
+                                                                <ul>
+                                                                    </ul>
+                            </div>
+                            <footer>
+                                <div class="product-pricing" id="product33-price">
+                                                                                                                    <span class="price">￥799.00CNY</span>
+                                        <br />
+                                                                                    每月
+                                                                                <br>
+                                                                                                            </div>
+                                <a href="/store/de-guo-fa-lan-ke-fu-da-lu-jing-pin-you-hua-bgp/de-guo-jing-pin-da-lu-you-hua-bgptao-can-f" class="btn btn-success btn-sm" id="product33-order-button">
+                                    <i class="fas fa-shopping-cart"></i>
+                                    立即订购
+                                </a>
+                            </footer>
+                        </div>
+                    </div>
+                                    </div>
+                <div class="row row-eq-height">
+                                                                                    <div class="col-md-6">
+                        <div class="product clearfix" id="product34">
+                            <header>
+                                <span id="product34-name">德国-精品大陆优化BGP-套餐G</span>
+                                                            </header>
+                            <div class="product-desc">
+                                                                    <p id="product34-description">
+                                        <div class="list-info"><i class="icon-cpu"></i> <span class="spec">CPU</span><br> <span>8核心</span></div><br><br />
+<div class="list-info"><i class="icon-ram"></i> <span class="spec">RAM</span><br> <span>8192MB内存</span></div><br><br />
+<div class="list-info"><i class="icon-drives"></i> <span class="spec">DISK</span><br> <span>80G SSD硬盘</span></div><br><br />
+<div class="list-info"><i class="icon-speed"></i> <span class="spec">DISK</span><br> <span>10000G流量(1000Mbps带宽) </span></div><br><br />
+<div class="list-info"><i class="icon-code"></i> <span class="spec">Price</span><br> <span>1299一月</span></div><br><br />
+
+                                    </p>
+                                                                <ul>
+                                                                    </ul>
+                            </div>
+                            <footer>
+                                <div class="product-pricing" id="product34-price">
+                                                                                                                    <span class="price">￥1299.00CNY</span>
+                                        <br />
+                                                                                    每月
+                                                                                <br>
+                                                                                                            </div>
+                                <a href="/store/de-guo-fa-lan-ke-fu-da-lu-jing-pin-you-hua-bgp/de-guo-jing-pin-da-lu-you-hua-bgptao-can-g" class="btn btn-success btn-sm" id="product34-order-button">
+                                    <i class="fas fa-shopping-cart"></i>
+                                    立即订购
+                                </a>
+                            </footer>
+                        </div>
+                    </div>
+                                                        </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+                    </div>
+
+                    </div>
+                                    <div class="clearfix"></div>
+            </div>
+        </div>
+    </section>
+
+    <footer id="footer" class="footer">
+        <div class="container">
+            <ul class="list-inline mb-7 text-center float-lg-right">
+                
+                            </ul>
+
+            <ul class="nav justify-content-center justify-content-lg-start mb-7">
+                <li class="nav-item">
+                    <a class="nav-link" href="/contact.php">
+                        联系我们
+                    </a>
+                </li>
+                                    <li class="nav-item">
+                        <a class="nav-link" href="https://cloudsilk.io/index.php?rp=/announcements/1/%E6%9C%8D%E5%8A%A1%E5%8D%8F%E8%AE%AE-Terms-Of-Service.html" target="_blank">服务条款</a>
+                    </li>
+                            </ul>
+
+            <p class="copyright mb-0">
+                版权所有 &copy; 2026 CloudSilk 保留所有权利。
+            </p>
+        </div>
+    </footer>
+
+    <div id="fullpage-overlay" class="w-hidden">
+        <div class="outer-wrapper">
+            <div class="inner-wrapper">
+                <img src="/assets/img/overlay-spinner.svg" alt="">
+                <br>
+                <span class="msg"></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal system-modal fade" id="modalAjax" tabindex="-1" role="dialog" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"></h5>
+                    <button type="button" class="close" data-dismiss="modal">
+                        <span aria-hidden="true">&times;</span>
+                        <span class="sr-only">关闭</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    正在加载…
+                </div>
+                <div class="modal-footer">
+                    <div class="float-left loader">
+                        <i class="fas fa-circle-notch fa-spin"></i>
+                        正在加载…
+                    </div>
+                    <button type="button" class="btn btn-default" data-dismiss="modal">
+                        关闭
+                    </button>
+                    <button type="button" class="btn btn-primary modal-submit">
+                        提交
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <form method="get" action="/store/de-guo-fa-lan-ke-fu-da-lu-jing-pin-you-hua-bgp?">
+        <div class="modal modal-localisation" id="modalChooseLanguage" tabindex="-1" role="dialog">
+            <div class="modal-dialog modal-lg" role="document">
+                <div class="modal-content">
+                    <div class="modal-body">
+                        <button type="button" class="close text-light" data-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+
+                                                                    </div>
+                    <div class="modal-footer">
+                        <button type="submit" class="btn btn-default">应用</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    
+    <form action="#" id="frmGeneratePassword">
+    <div class="modal fade" id="modalGeneratePassword">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h4 class="modal-title">
+                        生成密码
+                    </h4>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger w-hidden" id="generatePwLengthError">
+                        请输入长度在 8 到 64 之间的数字
+                    </div>
+                    <div class="form-group row">
+                        <label for="generatePwLength" class="col-sm-4 col-form-label">密码长度</label>
+                        <div class="col-sm-8">
+                            <input type="number" min="8" max="64" value="12" step="1" class="form-control input-inline input-inline-100" id="inputGeneratePasswordLength">
+                        </div>
+                    </div>
+                    <div class="form-group row">
+                        <label for="generatePwOutput" class="col-sm-4 col-form-label">密码已生成</label>
+                        <div class="col-sm-8">
+                            <input type="text" class="form-control" id="inputGeneratePasswordOutput">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-sm-8 offset-sm-4">
+                            <button type="submit" class="btn btn-default btn-sm">
+                                <i class="fas fa-plus fa-fw"></i>
+                                生成新密码
+                            </button>
+                            <button type="button" class="btn btn-default btn-sm copy-to-clipboard" data-clipboard-target="#inputGeneratePasswordOutput">
+                                <img src="/assets/img/clippy.svg" alt="Copy to clipboard" width="15">
+                                复制
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">
+                        关闭
+                    </button>
+                    <button type="button" class="btn btn-primary" id="btnGeneratePasswordInsert" data-clipboard-target="#inputGeneratePasswordOutput">
+                        复制到剪贴板并插入
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+    <script src="/assets/js/vendor/qrcode-generator-2.0.4/qrcode.js?v=20261102"></script>
+<script src="/assets/js/vendor/qrcode-generator-2.0.4/qrcode_UTF8.js?v=20261102"></script>
+<script src="/assets/js/totp-qr-local.js?v=20261102"></script>
+
+
+
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a5f9ec227b0bd790',t:'MTc5NTUzOTEyOA=='};var l=window.parent.location,o;try{o=new URL(l.origin).origin}catch(e){try{o=new URL(new URL(l.href).origin).origin}catch(e){o=''}}var u='/cdn-cgi/challenge-platform/scripts/jsd/main.js?ray=a5f9ec227b0bd790',a=document.createElement('script');a.src=o?new URL(u,o).href:u;document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>

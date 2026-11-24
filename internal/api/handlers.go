@@ -305,7 +305,7 @@ func (s *Server) handleSaveWatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteWatch(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteWatch(r.Context(), r.PathValue("id")); err != nil {
+	if err := s.engine.DeleteWatch(r.Context(), r.PathValue("id")); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -379,6 +379,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	messages, unsubscribe := s.engine.Bus().Subscribe()
 	defer unsubscribe()
+	defer s.engine.ViewerStreamOpened()() // 连接期间视为有人在看，无关注站点保持较高频率
 	fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
 	ping := time.NewTicker(25 * time.Second)

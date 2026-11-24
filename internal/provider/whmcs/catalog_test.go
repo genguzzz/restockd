@@ -130,3 +130,29 @@ func TestParseGroupStandardCartChinese(t *testing.T) {
 		t.Fatalf("label-style location / ip not parsed: %+v", specs)
 	}
 }
+
+// CloudSilk：未开库存控制的商品只有可用的下单按钮（友好 URL）；周期写「每年 / 每月」。
+func TestParseGroupFriendlyURLAndChineseCycle(t *testing.T) {
+	body, err := os.ReadFile("../../../testdata/whmcs/cloudsilk_store_de.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, _ := New(domain.Site{ID: "cloudsilk", BaseURL: "https://cloudsilk.io", Config: map[string]string{"groups": "de", "currency": "CNY"}})
+	products, err := instance.(*Provider).ParseGroup(body, "de", "https://cloudsilk.io/store/de")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]domain.Product{}
+	for _, product := range products {
+		byID[product.ID] = product
+		if product.Stock.Status == domain.StockUnknown {
+			t.Errorf("product %s stock unknown", product.ID)
+		}
+	}
+	if a := byID["28"]; a.Stock.Status != domain.StockOut || a.Prices[0].Cycle != domain.CycleAnnually || a.Prices[0].Amount.Cents != 29999 {
+		t.Fatalf("套餐A: want sold out, annual ¥299.99, got %+v %+v", a.Stock, a.Prices)
+	}
+	if c := byID["30"]; c.Stock.Status != domain.StockIn || c.Prices[0].Cycle != domain.CycleMonthly {
+		t.Fatalf("套餐C: want in stock monthly, got %+v %+v", c.Stock, c.Prices)
+	}
+}

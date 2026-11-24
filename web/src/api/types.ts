@@ -293,6 +293,8 @@ export interface Settings {
   }
   bark: { enabled: boolean; device_urls: string; group: string; sound: string; icon: string }
   solver: { flaresolverr_url: string; external_url: string; external_token: string; manual_timeout_sec: number }
+  /** 无关注站点的降频：无人访问 idle、有人访问 viewer（秒，0 为默认 3600 / 300） */
+  polling: { idle_interval_sec: number; viewer_interval_sec: number }
   notify_events: EventType[]
 }
 

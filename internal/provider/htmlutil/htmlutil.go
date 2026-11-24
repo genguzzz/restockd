@@ -131,9 +131,9 @@ var cycleWords = []struct {
 	{[]string{"semi-annually", "semiannually", "semi annually", "半年"}, domain.CycleSemiannually},
 	{[]string{"biennially", "两年"}, domain.CycleBiennially},
 	{[]string{"triennially", "三年"}, domain.CycleTriennially},
-	{[]string{"annually", "yearly", "年付", "/yr", "/year"}, domain.CycleAnnually},
-	{[]string{"quarterly", "季付", "季度"}, domain.CycleQuarterly},
-	{[]string{"monthly", "月付", "/mo", "/month"}, domain.CycleMonthly},
+	{[]string{"annually", "yearly", "年付", "年缴", "每年", "包年", "/yr", "/year"}, domain.CycleAnnually},
+	{[]string{"quarterly", "季付", "季缴", "每季", "季度"}, domain.CycleQuarterly},
+	{[]string{"monthly", "月付", "月缴", "每月", "包月", "/mo", "/month"}, domain.CycleMonthly},
 	{[]string{"one time", "one-time", "onetime", "free", "一次性"}, domain.CycleOneTime},
 }
 

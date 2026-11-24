@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 设置页：通知渠道（Telegram / SMTP / Bark）、验证码求解与通知事件；密码类字段 "******" 表示已设置且不修改
+// 设置页：通知渠道（Telegram / SMTP / Bark）、验证码求解、轮询策略与通知事件；密码类字段 "******" 表示已设置且不修改
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import {
@@ -53,6 +53,7 @@ function emptySettings(): Settings {
     email: { enabled: false, host: '', port: 587, username: '', password: '', from: '', to: '', starttls: true },
     bark: { enabled: false, device_urls: '', group: '', sound: '', icon: '' },
     solver: { flaresolverr_url: '', external_url: '', external_token: '', manual_timeout_sec: 300 },
+    polling: { idle_interval_sec: 3600, viewer_interval_sec: 300 },
     notify_events: [],
   }
 }
@@ -72,6 +73,10 @@ const applySettings = (settings: Settings) => {
     externalToken: masked.value.externalToken ? '' : settings.solver.external_token,
   }
   form.value = JSON.parse(JSON.stringify(settings)) as Settings
+  form.value.polling = {
+    idle_interval_sec: settings.polling?.idle_interval_sec || 3600,
+    viewer_interval_sec: settings.polling?.viewer_interval_sec || 300,
+  }
   savedSnapshot.value = JSON.stringify(buildPayload(form.value))
   loaded.value = true
 }
@@ -290,6 +295,37 @@ onMounted(() => {
           </n-form>
         </n-card>
 
+        <n-card title="轮询策略" size="small">
+          <n-form label-placement="top" size="small">
+            <n-alert type="default" :show-icon="false" class="contract">
+              有启用中的关注规则的站点按站点自身间隔轮询；没有关注的站点自动降频，有人打开管理界面时立即刷新一次并提速。
+              降频间隔不会低于站点自身设置。
+            </n-alert>
+            <div class="row-2 even">
+              <n-form-item label="无人访问时">
+                <n-input-number
+                  :value="Math.round(form.polling.idle_interval_sec / 60)"
+                  :min="1"
+                  style="width: 100%"
+                  @update:value="(value: number | null) => (form.polling.idle_interval_sec = (value ?? 60) * 60)"
+                >
+                  <template #suffix>分钟</template>
+                </n-input-number>
+              </n-form-item>
+              <n-form-item label="有人访问时">
+                <n-input-number
+                  :value="Math.round(form.polling.viewer_interval_sec / 60)"
+                  :min="1"
+                  style="width: 100%"
+                  @update:value="(value: number | null) => (form.polling.viewer_interval_sec = (value ?? 5) * 60)"
+                >
+                  <template #suffix>分钟</template>
+                </n-input-number>
+              </n-form-item>
+            </div>
+          </n-form>
+        </n-card>
+
         <n-card title="通知事件" size="small">
           <n-checkbox-group v-model:value="notifyEvents">
             <n-space item-style="display: flex">
@@ -323,6 +359,9 @@ onMounted(() => {
   display: grid;
   grid-template-columns: 1fr 120px;
   gap: 0 12px;
+}
+.row-2.even {
+  grid-template-columns: 1fr 1fr;
 }
 .contract {
   margin: -4px 0 16px;

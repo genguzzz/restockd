@@ -98,7 +98,24 @@ func (e *Engine) SaveWatch(ctx context.Context, watch domain.Watch) (domain.Watc
 	if existing, err := e.store.GetWatch(ctx, watch.ID); err == nil {
 		watch.CreatedAt, watch.OrdersPlaced, watch.LastTriggered = existing.CreatedAt, existing.OrdersPlaced, existing.LastTriggered
 	}
-	return watch, e.store.SaveWatch(ctx, watch)
+	if err := e.store.SaveWatch(ctx, watch); err != nil {
+		return watch, err
+	}
+	e.RescheduleSite(watch.SiteID)
+	return watch, nil
+}
+
+// DeleteWatch 删除关注规则并让站点按新间隔重排（可能降频）。
+func (e *Engine) DeleteWatch(ctx context.Context, watchID string) error {
+	watch, err := e.store.GetWatch(ctx, watchID)
+	if err != nil {
+		return err
+	}
+	if err := e.store.DeleteWatch(ctx, watchID); err != nil {
+		return err
+	}
+	e.RescheduleSite(watch.SiteID)
+	return nil
 }
 
 // SaveAccount 新建或更新账号基础信息（不改 Cookie）。

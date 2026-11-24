@@ -21,3 +21,12 @@ func TestParseMoney(t *testing.T) {
 		}
 	}
 }
+
+func TestParseCycleChinese(t *testing.T) {
+	cases := map[string]domain.BillingCycle{"每年": domain.CycleAnnually, "月缴": domain.CycleMonthly, "每月": domain.CycleMonthly, "每季": domain.CycleQuarterly, "每半年": domain.CycleSemiannually, "两年": domain.CycleBiennially, "Monthly": domain.CycleMonthly}
+	for text, want := range cases {
+		if got := ParseCycle(text); got != want {
+			t.Errorf("ParseCycle(%q) = %q, want %q", text, got, want)
+		}
+	}
+}

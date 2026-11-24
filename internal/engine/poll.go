@@ -24,6 +24,7 @@ type siteRunner struct {
 	site     domain.Site
 	provider provider.Provider
 	trigger  chan chan error
+	wake     chan wakeKind
 	cancel   context.CancelFunc
 	done     chan struct{}
 }
@@ -39,7 +40,7 @@ func (e *Engine) ReloadSite(site domain.Site) error {
 		return err
 	}
 	ctx, cancel := context.WithCancel(e.rootCtx)
-	runner := &siteRunner{site: site, provider: instance, trigger: make(chan chan error), cancel: cancel, done: make(chan struct{})}
+	runner := &siteRunner{site: site, provider: instance, trigger: make(chan chan error), wake: make(chan wakeKind, 1), cancel: cancel, done: make(chan struct{})}
 	e.mu.Lock()
 	e.sites[site.ID] = runner
 	delete(e.sessions, "anon:"+site.ID)
@@ -86,34 +87,10 @@ func (e *Engine) PollNow(ctx context.Context, siteID string) error {
 func (e *Engine) runSite(ctx context.Context, runner *siteRunner) {
 	defer e.wg.Done()
 	defer close(runner.done)
-	meta := runner.provider.Meta()
-	interval := provider.EffectiveInterval(meta, runner.site)
 	// 启动时错峰，避免多个站点同时发请求。
 	timer := time.NewTimer(time.Duration(rand.Int64N(int64(3 * time.Second))))
 	defer timer.Stop()
-	failures := 0
-	for {
-		var reply chan error
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-		case reply = <-runner.trigger:
-		}
-		err := e.pollSite(ctx, runner)
-		if reply != nil {
-			reply <- err
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		wait := jitter(interval)
-		if err != nil {
-			failures++
-			wait = backoff(interval, failures, err)
-		} else {
-			failures = 0
-		}
+	resetTimer := func(wait time.Duration, failures int) {
 		e.markNextPoll(ctx, runner.site.ID, time.Now().Add(wait), failures)
 		if !timer.Stop() {
 			select {
@@ -122,6 +99,48 @@ func (e *Engine) runSite(ctx context.Context, runner *siteRunner) {
 			}
 		}
 		timer.Reset(wait)
+	}
+	failures := 0
+	var lastPoll time.Time
+	for {
+		var reply chan error
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		case reply = <-runner.trigger:
+		case kind := <-runner.wake:
+			interval, watched := e.siteInterval(ctx, runner)
+			sinceLast := time.Since(lastPoll)
+			switch {
+			case kind == wakeViewer && !watched && sinceLast >= viewerRefreshMin:
+				// 有人来看：无关注站点立即刷一次。
+			case lastPoll.IsZero() || sinceLast >= interval:
+				// 新间隔下已到期。
+			default:
+				if failures == 0 {
+					resetTimer(interval-sinceLast, failures)
+				}
+				continue
+			}
+		}
+		err := e.pollSite(ctx, runner)
+		lastPoll = time.Now()
+		if reply != nil {
+			reply <- err
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		interval, _ := e.siteInterval(ctx, runner)
+		wait := jitter(interval)
+		if err != nil {
+			failures++
+			wait = backoff(interval, failures, err)
+		} else {
+			failures = 0
+		}
+		resetTimer(wait, failures)
 	}
 }
 

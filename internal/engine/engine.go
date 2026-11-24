@@ -35,6 +35,7 @@ type Settings struct {
 	Email        notify.EmailConfig    `json:"email"`
 	Bark         notify.BarkConfig     `json:"bark"`
 	Solver       SolverSettings        `json:"solver"`
+	Polling      PollingSettings       `json:"polling"`
 	NotifyEvents []string              `json:"notify_events"`
 }
 
@@ -43,6 +44,7 @@ func DefaultSettings() Settings {
 	return Settings{
 		Email:        notify.EmailConfig{Port: 587, StartTLS: true},
 		Solver:       SolverSettings{FlareSolverrURL: "http://127.0.0.1:8191", ManualTimeoutSec: 300},
+		Polling:      PollingSettings{IdleIntervalSec: int(defaultIdleInterval / time.Second), ViewerIntervalSec: int(defaultViewerInterval / time.Second)},
 		NotifyEvents: []string{string(domain.EventRestock), string(domain.EventOrder), string(domain.EventChallenge), string(domain.EventAccount)},
 	}
 }
@@ -74,6 +76,7 @@ type Engine struct {
 	solver   solver.Solver
 	sites    map[string]*siteRunner
 	sessions map[string]*fetch.Session
+	viewers  viewerTracker
 	// loginLocks 每个账号一把锁，串行化自动登录。
 	loginLocks map[string]*sync.Mutex
 	orderLock  map[string]*sync.Mutex

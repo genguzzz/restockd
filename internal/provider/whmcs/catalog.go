@@ -283,9 +283,11 @@ func parseStock(node *goquery.Selection) domain.Stock {
 		zero := 0
 		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: qtyText}
 	}
-	button := node.Find("a.btn-order-now, a[href*='a=add']").First()
+	// 未开库存控制的商品没有数量标签，只能看下单按钮：standard_cart 的 id 为 product<N>-order-button，
+	// 友好 URL 主题链接是 /store/<组>/<商品> 而非 cart.php?a=add。
+	button := node.Find("[id$='-order-button'], a.btn-order-now, a[href*='a=add']").First()
 	if button.Length() > 0 {
-		if button.HasClass("disabled") {
+		if button.HasClass("disabled") || button.Is("[disabled]") {
 			return domain.Stock{Status: domain.StockOut, Reason: "order button disabled"}
 		}
 		return domain.Stock{Status: domain.StockIn}

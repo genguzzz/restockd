@@ -220,9 +220,13 @@
   "email": {"enabled": false, "host": "smtp.gmail.com", "port": 587, "username": "", "password": "******", "from": "", "to": "", "starttls": true},
   "bark": {"enabled": true, "device_urls": "******", "group": "restockd", "sound": "", "icon": ""},
   "solver": {"flaresolverr_url": "http://127.0.0.1:8191", "external_url": "", "external_token": "******", "manual_timeout_sec": 300},
+  "polling": {"idle_interval_sec": 3600, "viewer_interval_sec": 300},
   "notify_events": ["restock", "order", "challenge"]
 }
 ```
+- `polling`：没有启用中关注规则的站点自动降频——无人访问按 `idle_interval_sec`，有人访问（SSE 连着或最近
+  `viewer_interval_sec` 内有已登录请求）按 `viewer_interval_sec`，访问开始时立即刷新一次；都不低于站点自身间隔。
+  有关注的站点始终按站点 `interval_sec`。增删关注规则会立即重排。
 - `bark.device_urls`：Bark 设备地址 `https://<server>/<device key>`，逗号 / 换行分隔多台；属于密钥，读取时回传 `"******"`。
   补货 / 锁单 / 人工验证以 `timeSensitive` 级别推送，其余事件为 `active`。
 - `POST /api/settings/test-notify` → `{"ok":true,"results":{"telegram":"ok","email":"disabled","bark":"ok"}}`

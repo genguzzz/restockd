@@ -163,6 +163,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		s.engine.TouchViewer() // 有人在用管理界面：无关注站点提速并立即刷新
 		next(w, r)
 	}
 }
