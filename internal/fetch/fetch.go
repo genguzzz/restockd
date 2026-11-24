@@ -1,6 +1,7 @@
-// Package fetch 提供统一的 HTTP 抓取抽象：直连客户端、FlareSolverr 代理客户端与两者组合的混合模式。
+// Package fetch 提供统一的 HTTP 抓取抽象：Client 接口、会话（Cookie 罐 + UA）、HTTPClient（直连或经代理）、
+// FlareSolverrClient（真实浏览器，过 Cloudflare 质询）与 Cookie 文本解析。
 //
-// Provider 只依赖 Client 接口，不关心请求是直连还是经由浏览器代理发出。
+// Provider 只依赖 Client 接口；走哪个出口、遇质询是否回落浏览器由 egress 层决定。
 package fetch
 
 import (
@@ -57,7 +58,7 @@ func (e *ChallengeError) Error() string {
 	return fmt.Sprintf("challenge %s at %s", e.Kind, e.URL)
 }
 
-// RateLimitError 站点限流。
+// RateLimitError 站点限流；RetryAfter 为 0 表示站点没说多久。
 type RateLimitError struct {
 	RetryAfter time.Duration
 }
@@ -173,17 +174,18 @@ func (s *Session) Cookie(name string) string {
 	return ""
 }
 
-// DirectClient 基于共享 Transport 的直连客户端，连接复用、支持 HTTP/2。
-type DirectClient struct {
+// HTTPClient 基于共享 Transport 的 HTTP 客户端（直连或经单个代理），连接复用、支持 HTTP/2。
+type HTTPClient struct {
 	transport http.RoundTripper
 	timeout   time.Duration
 }
 
-// NewDirectClient 创建直连客户端；proxyURL 为空则读取环境变量代理。
-func NewDirectClient(timeout time.Duration, proxyURL string) (*DirectClient, error) {
+// NewHTTPClient 创建客户端；proxyURL 为空即直连（不读取环境变量代理，出口只由 egress 决定）。
+func NewHTTPClient(timeout time.Duration, proxyURL string) (*HTTPClient, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConnsPerHost = 16
 	transport.IdleConnTimeout = 90 * time.Second
+	transport.Proxy = nil
 	if proxyURL != "" {
 		parsed, err := url.Parse(proxyURL)
 		if err != nil {
@@ -191,11 +193,11 @@ func NewDirectClient(timeout time.Duration, proxyURL string) (*DirectClient, err
 		}
 		transport.Proxy = http.ProxyURL(parsed)
 	}
-	return &DirectClient{transport: transport, timeout: timeout}, nil
+	return &HTTPClient{transport: transport, timeout: timeout}, nil
 }
 
 // Do 发送请求并按约定把质询、限流转换为类型化错误。
-func (c *DirectClient) Do(ctx context.Context, session *Session, req *Request) (*Response, error) {
+func (c *HTTPClient) Do(ctx context.Context, session *Session, req *Request) (*Response, error) {
 	httpReq, err := buildRequest(ctx, session, req)
 	if err != nil {
 		return nil, err
@@ -276,11 +278,8 @@ func IsCloudflareChallenge(resp *Response) bool {
 	return bytes.Contains(head, []byte("challenge-platform")) || bytes.Contains(head, []byte("<title>Just a moment..."))
 }
 
+// parseRetryAfter 缺失或无法解析时返回 0，由调用方选默认冷却。
 func parseRetryAfter(value string) time.Duration {
-	const fallback = time.Minute
-	if value == "" {
-		return fallback
-	}
 	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds >= 0 {
 		return time.Duration(seconds) * time.Second
 	}
@@ -289,5 +288,5 @@ func parseRetryAfter(value string) time.Duration {
 			return wait
 		}
 	}
-	return fallback
+	return 0
 }

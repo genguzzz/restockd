@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -14,7 +15,8 @@ import (
 // FlareSolverrClient 通过 FlareSolverr（真实浏览器）发请求，用于 Cloudflare 托管质询站点。
 //
 // 每次请求把会话 Cookie 带给浏览器，并把浏览器拿到的 Cookie（含 cf_clearance）与 UA 写回会话，
-// 这样后续可以先用直连客户端复用 cf_clearance，失败再回落到这里（见 HybridClient）。
+// 之后普通 HTTP 客户端即可复用 cf_clearance。cf_clearance 绑定出口 IP，因此浏览器必须走与原请求
+// 相同的代理（见 egress.Client.Browser）。
 type FlareSolverrClient struct {
 	endpoint   string
 	httpClient *http.Client
@@ -46,6 +48,32 @@ type flareRequest struct {
 	MaxTimeout int64         `json:"maxTimeout"`
 	Cookies    []flareCookie `json:"cookies,omitempty"`
 	PostData   string        `json:"postData,omitempty"`
+	Proxy      *flareProxy   `json:"proxy,omitempty"`
+}
+
+// flareProxy 浏览器不接受 URL 里的账号密码，需拆成单独字段。
+type flareProxy struct {
+	URL      string `json:"url"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+func toFlareProxy(proxyURL string) (*flareProxy, error) {
+	if proxyURL == "" {
+		return nil, nil
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse proxy: %w", err)
+	}
+	proxy := &flareProxy{}
+	if parsed.User != nil {
+		proxy.Username = parsed.User.Username()
+		proxy.Password, _ = parsed.User.Password()
+		parsed.User = nil
+	}
+	proxy.URL = parsed.String()
+	return proxy, nil
 }
 
 type flareResponse struct {
@@ -61,16 +89,23 @@ type flareResponse struct {
 	} `json:"solution"`
 }
 
-// Do 仅支持 GET 与表单 POST（FlareSolverr 的限制）。
-func (c *FlareSolverrClient) Do(ctx context.Context, session *Session, req *Request) (*Response, error) {
+// Do 经 proxyURL（空为直连）用浏览器发请求。浏览器只能发 GET 与表单 POST，且不带自定义请求头：
+// JSON 请求返回错误，调用方应先用 GET 过质询、再用普通客户端重发（见 egress.Client）。
+// 连不上 FlareSolverr 等错误不包装原始网络错误，避免被出口层误判为出口故障。
+func (c *FlareSolverrClient) Do(ctx context.Context, session *Session, req *Request, proxyURL string) (*Response, error) {
+	if req.JSON != nil {
+		return nil, fmt.Errorf("flaresolverr: json body not supported")
+	}
 	payload := flareRequest{Cmd: "request.get", URL: req.URL, MaxTimeout: c.maxTimeout.Milliseconds()}
 	if req.Method == http.MethodPost {
-		if req.JSON != nil {
-			return nil, fmt.Errorf("flaresolverr: json body not supported")
-		}
 		payload.Cmd = "request.post"
 		payload.PostData = req.Form.Encode()
 	}
+	proxy, err := toFlareProxy(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	payload.Proxy = proxy
 	for _, cookie := range session.Cookies() {
 		payload.Cookies = append(payload.Cookies, flareCookie{Name: cookie.Name, Value: cookie.Value})
 	}
@@ -85,12 +120,12 @@ func (c *FlareSolverrClient) Do(ctx context.Context, session *Session, req *Requ
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("flaresolverr: %w", err)
+		return nil, fmt.Errorf("flaresolverr: %v", err)
 	}
 	defer httpResp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(httpResp.Body, maxBodyBytes))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("flaresolverr: read: %v", err)
 	}
 	var parsed flareResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
@@ -123,19 +158,4 @@ func toHTTPCookies(cookies []flareCookie) []*http.Cookie {
 		out = append(out, item)
 	}
 	return out
-}
-
-// HybridClient 先直连（复用已有 cf_clearance），遇到质询再交给回落客户端并刷新会话 Cookie。
-type HybridClient struct {
-	Primary  Client
-	Fallback Client
-}
-
-// Do 见类型说明。
-func (c *HybridClient) Do(ctx context.Context, session *Session, req *Request) (*Response, error) {
-	resp, err := c.Primary.Do(ctx, session, req)
-	if err == nil || !IsChallenge(err) || c.Fallback == nil {
-		return resp, err
-	}
-	return c.Fallback.Do(ctx, session, req)
 }

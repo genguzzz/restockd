@@ -30,15 +30,9 @@ type ExternalSolver struct {
 // Name 实现 Solver。
 func (s *ExternalSolver) Name() string { return "external" }
 
-// Supports 未配置 Kinds 时视为支持全部 token 类验证。
+// Supports 未配置 Kinds 时视为支持全部类型。
 func (s *ExternalSolver) Supports(kind Kind) bool {
-	if s.Endpoint == "" {
-		return false
-	}
-	if len(s.Kinds) == 0 {
-		return kind != KindCloudflare
-	}
-	return slices.Contains(s.Kinds, kind)
+	return s.Endpoint != "" && (len(s.Kinds) == 0 || slices.Contains(s.Kinds, kind))
 }
 
 type externalResponse struct {
@@ -94,29 +88,4 @@ func (s *ExternalSolver) Solve(ctx context.Context, challenge Challenge) (Soluti
 		return Solution{}, fmt.Errorf("empty solution")
 	}
 	return solution, nil
-}
-
-// FlareSolverrSolver 用 FlareSolverr 打开页面通过 Cloudflare 托管质询，返回 cf_clearance 与 UA。
-type FlareSolverrSolver struct {
-	Client *fetch.FlareSolverrClient
-}
-
-// Name 实现 Solver。
-func (s *FlareSolverrSolver) Name() string { return "flaresolverr" }
-
-// Supports 只处理 Cloudflare 页面质询。
-func (s *FlareSolverrSolver) Supports(kind Kind) bool {
-	return s.Client != nil && kind == KindCloudflare
-}
-
-// Solve 实现 Solver。
-func (s *FlareSolverrSolver) Solve(ctx context.Context, challenge Challenge) (Solution, error) {
-	session, err := fetch.NewSession(challenge.PageURL, nil, "")
-	if err != nil {
-		return Solution{}, err
-	}
-	if _, err := s.Client.Do(ctx, session, &fetch.Request{Method: http.MethodGet, URL: challenge.PageURL}); err != nil {
-		return Solution{}, err
-	}
-	return Solution{Cookies: session.Cookies(), UserAgent: session.UserAgent(), SolvedBy: s.Name()}, nil
 }

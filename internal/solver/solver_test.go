@@ -33,10 +33,10 @@ func (f *fakeSolver) Solve(context.Context, Challenge) (Solution, error) {
 }
 
 func TestChainSkipsUnsupportedAndFallsThrough(t *testing.T) {
-	cfOnly := &fakeSolver{name: "cf", kinds: []Kind{KindCloudflare}, token: "nope"}
+	hcOnly := &fakeSolver{name: "hc", kinds: []Kind{KindHCaptcha}, token: "nope"}
 	failing := &fakeSolver{name: "ext", kinds: []Kind{KindTurnstile}, err: errors.New("boom")}
-	manual := &fakeSolver{name: "manual", kinds: []Kind{KindTurnstile, KindCloudflare}, token: "tok"}
-	chain := Chain{cfOnly, failing, manual}
+	manual := &fakeSolver{name: "manual", kinds: []Kind{KindTurnstile, KindHCaptcha}, token: "tok"}
+	chain := Chain{hcOnly, failing, manual}
 	solution, err := chain.Solve(context.Background(), Challenge{Kind: KindTurnstile})
 	if err != nil {
 		t.Fatal(err)
@@ -44,8 +44,8 @@ func TestChainSkipsUnsupportedAndFallsThrough(t *testing.T) {
 	if solution.Token != "tok" || solution.SolvedBy != "manual" {
 		t.Fatalf("unexpected solution %+v", solution)
 	}
-	if cfOnly.calls != 0 || failing.calls != 1 {
-		t.Fatalf("calls cf=%d ext=%d", cfOnly.calls, failing.calls)
+	if hcOnly.calls != 0 || failing.calls != 1 {
+		t.Fatalf("calls hc=%d ext=%d", hcOnly.calls, failing.calls)
 	}
 }
 
@@ -98,7 +98,7 @@ func TestManualBrokerCancelAndTimeout(t *testing.T) {
 	broker.OnNew = func(p Pending) { created <- p }
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := broker.Solve(context.Background(), Challenge{Kind: KindCloudflare})
+		_, err := broker.Solve(context.Background(), Challenge{Kind: KindHCaptcha})
 		errCh <- err
 	}()
 	if err := broker.Cancel((<-created).ID); err != nil {
@@ -109,7 +109,7 @@ func TestManualBrokerCancelAndTimeout(t *testing.T) {
 	}
 	broker.SetTimeout(20 * time.Millisecond)
 	broker.OnNew = nil
-	if _, err := broker.Solve(context.Background(), Challenge{Kind: KindCloudflare}); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := broker.Solve(context.Background(), Challenge{Kind: KindHCaptcha}); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want timeout, got %v", err)
 	}
 }
@@ -132,7 +132,7 @@ func TestExternalSolverContract(t *testing.T) {
 	}))
 	defer server.Close()
 	ext := &ExternalSolver{Endpoint: server.URL, Token: "secret"}
-	if ext.Supports(KindCloudflare) || !ext.Supports(KindTurnstile) {
+	if !ext.Supports(KindHCaptcha) || !ext.Supports(KindTurnstile) || (&ExternalSolver{}).Supports(KindTurnstile) {
 		t.Fatal("default kinds wrong")
 	}
 	solution, err := ext.Solve(context.Background(), Challenge{Kind: KindTurnstile, SiteKey: "0xKEY", PageURL: "https://usvps24.com/cart"})

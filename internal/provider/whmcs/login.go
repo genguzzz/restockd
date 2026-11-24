@@ -13,7 +13,6 @@ import (
 	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/provider"
 	"github.com/genguzzz/restockd/internal/provider/htmlutil"
-	"github.com/genguzzz/restockd/internal/solver"
 )
 
 var _ provider.Authenticator = (*Provider)(nil)
@@ -48,28 +47,15 @@ func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Cre
 	if values.Get("token") == "" {
 		values.Set("token", htmlutil.CSRFToken(doc, nil))
 	}
-	if kind, siteKey, found := htmlutil.DetectCaptcha(doc); found {
-		if env.Solver == nil {
-			return provider.SessionInfo{}, fmt.Errorf("login requires %s but no solver configured", kind)
-		}
-		solution, err := env.Solver.Solve(ctx, solver.Challenge{Kind: kind, SiteKey: siteKey, PageURL: formURL, SiteID: env.Site.ID, AccountID: accountID(env), Purpose: env.Site.Name + " 登录"})
-		if err != nil {
-			return provider.SessionInfo{}, fmt.Errorf("solve %s: %w", kind, err)
-		}
-		values.Set(htmlutil.CaptchaField(kind), solution.Token)
+	if err := solveCaptcha(ctx, env, doc, values, formURL, env.Site.Name+" 登录"); err != nil {
+		return provider.SessionInfo{}, err
 	}
 	action := htmlutil.Resolve(formURL, form.AttrOr("action", formURL))
-	resp, err := env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodPost, URL: action, Form: values})
+	submitted, err := fetchPage(ctx, env, &fetch.Request{Method: http.MethodPost, URL: action, Form: values})
 	if err != nil {
 		return provider.SessionInfo{}, err
 	}
-	if resp.StatusCode >= http.StatusBadRequest {
-		return provider.SessionInfo{}, &fetch.HTTPError{StatusCode: resp.StatusCode, URL: resp.URL}
-	}
-	result, err := htmlutil.Parse(resp.Body)
-	if err != nil {
-		return provider.SessionInfo{}, err
-	}
+	result := submitted.doc
 	if passwordForm(result) != nil {
 		message := errorMessage(result)
 		if message == "" {
@@ -77,7 +63,7 @@ func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Cre
 		}
 		return provider.SessionInfo{}, fmt.Errorf("%w: %s", provider.ErrLoginFailed, message)
 	}
-	if result.Find(`a[href*="logout"]`).Length() == 0 && twoFactorPattern.Match(resp.Body) {
+	if result.Find(`a[href*="logout"]`).Length() == 0 && twoFactorPattern.Match(submitted.resp.Body) {
 		return provider.SessionInfo{}, fmt.Errorf("%w: two-factor authentication is enabled; disable it or paste cookies", provider.ErrLoginFailed)
 	}
 	info, err := p.CheckSession(ctx, env)
@@ -92,26 +78,18 @@ func (p *Provider) findLoginForm(ctx context.Context, env provider.Env) (*goquer
 	var lastDoc *goquery.Document
 	var lastErr error
 	for _, path := range loginPaths {
-		resp, err := env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodGet, URL: p.baseURL + path})
+		loaded, err := fetchPage(ctx, env, &fetch.Request{Method: http.MethodGet, URL: p.baseURL + path})
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		if resp.StatusCode >= http.StatusBadRequest {
-			lastErr = &fetch.HTTPError{StatusCode: resp.StatusCode, URL: resp.URL}
-			continue
-		}
-		doc, err := htmlutil.Parse(resp.Body)
-		if err != nil {
-			lastErr = err
-			continue
-		}
+		doc := loaded.doc
 		lastDoc, lastErr = doc, nil
 		if form := passwordForm(doc); form != nil {
-			return form, resp.URL, doc, nil
+			return form, loaded.resp.URL, doc, nil
 		}
 		if doc.Find(`a[href*="logout"]`).Length() > 0 {
-			return nil, resp.URL, doc, nil
+			return nil, loaded.resp.URL, doc, nil
 		}
 	}
 	return nil, "", lastDoc, lastErr

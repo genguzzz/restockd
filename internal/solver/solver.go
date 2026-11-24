@@ -1,7 +1,8 @@
 // Package solver 定义人机验证的统一求解接口。
 //
-// Provider 在下单等环节遇到验证码时构造 Challenge 交给 Solver；Solver 可以是外部服务（用户自配的
-// HTTP 接口、FlareSolverr），也可以是 ManualBroker——把挑战挂到界面上，由用户手动粘贴 token 或 Cookie。
+// Provider 在下单、登录等环节遇到验证码时构造 Challenge 交给 Solver（经 provider.Env.Solve）；Solver 可以是
+// 外部服务（用户自配的 HTTP 接口），也可以是 ManualBroker——把挑战挂到界面上，由用户手动粘贴 token 或 Cookie。
+// Cloudflare 托管质询不走这里，由出口层的浏览器回落（FlareSolverr）处理。
 // Chain 按顺序尝试多个 Solver，因此"自动优先、手动兜底"只是一种组合方式。
 package solver
 
@@ -17,7 +18,6 @@ import (
 type Kind string
 
 const (
-	KindCloudflare  Kind = "cloudflare"
 	KindTurnstile   Kind = "turnstile"
 	KindRecaptchaV2 Kind = "recaptcha_v2"
 	KindRecaptchaV3 Kind = "recaptcha_v3"
@@ -39,7 +39,7 @@ type Challenge struct {
 	Purpose string `json:"purpose"`
 }
 
-// Solution 求解结果：token 类验证填 Token；Cookie 类（Cloudflare）填 Cookies 与 UserAgent。
+// Solution 求解结果：Token 填入表单；附带的 Cookies 与 UserAgent（人工或外部服务给出）由 provider.Env.Solve 写回会话。
 type Solution struct {
 	Token     string         `json:"token,omitempty"`
 	Cookies   []*http.Cookie `json:"-"`

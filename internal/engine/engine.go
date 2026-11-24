@@ -70,7 +70,7 @@ type Engine struct {
 	broker    *solver.ManualBroker
 	publicURL string
 
-	direct *fetch.DirectClient
+	direct *fetch.HTTPClient
 	// egress 出口登记表（直连 + 设置里的代理）与共享冷却状态。
 	egress       *egress.Registry
 	egressHealth *egress.Health
@@ -98,7 +98,7 @@ func New(options Options) (*Engine, error) {
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-	direct, err := fetch.NewDirectClient(timeout, options.ProxyURL)
+	direct, err := fetch.NewHTTPClient(timeout, options.ProxyURL)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +106,7 @@ func New(options Options) (*Engine, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	health := egress.NewHealth()
 	engine := &Engine{
 		store:        options.Store,
 		log:          logger,
@@ -114,8 +115,8 @@ func New(options Options) (*Engine, error) {
 		broker:       solver.NewManualBroker(5 * time.Minute),
 		publicURL:    strings.TrimRight(options.PublicURL, "/"),
 		direct:       direct,
-		egress:       egress.NewRegistry(direct, timeout),
-		egressHealth: egress.NewHealth(),
+		egress:       egress.NewRegistry(direct, timeout, health),
+		egressHealth: health,
 		sites:        map[string]*siteRunner{},
 		sessions:     map[string]*fetch.Session{},
 		orderLock:    map[string]*sync.Mutex{},
@@ -204,7 +205,6 @@ func (e *Engine) ApplySettings(settings Settings) {
 	}
 	if settings.Solver.FlareSolverrURL != "" {
 		flare = fetch.NewFlareSolverrClient(settings.Solver.FlareSolverrURL, 60*time.Second)
-		chain = append(chain, &solver.FlareSolverrSolver{Client: flare})
 	}
 	chain = append(chain, e.broker)
 	e.mu.Lock()
@@ -233,15 +233,13 @@ func (e *Engine) clientFor(site domain.Site) fetch.Client {
 	e.mu.RLock()
 	flare := e.flare
 	e.mu.RUnlock()
-	var client fetch.Client
 	routes, err := e.egress.Routes(site.ID, site.Egress)
 	if err != nil {
-		client = errClient{err: err}
-	} else {
-		client = &egress.Client{SiteID: site.ID, Routes: routes, Health: e.egressHealth, Log: e.log}
+		return errClient{err: err}
 	}
+	client := &egress.Client{SiteID: site.ID, Routes: routes, Health: e.egressHealth, Log: e.log}
 	if site.FetchMode == domain.FetchFlareSolverr && flare != nil {
-		return &fetch.HybridClient{Primary: client, Fallback: flare}
+		client.Browser = flare
 	}
 	return client
 }

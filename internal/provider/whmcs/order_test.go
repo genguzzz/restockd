@@ -29,6 +29,7 @@ type fakeWHMCS struct {
 	captcha     bool
 	cart        []url.Values
 	promo       string
+	silentPromo bool
 	checkout    url.Values
 	emptied     int
 	checkoutHit int
@@ -103,6 +104,11 @@ func (f *fakeWHMCS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.cart = append(f.cart, r.PostForm)
 	case r.Method == http.MethodPost && action == "view":
 		code := r.PostForm.Get("promocode")
+		if f.silentPromo && code != "SAVE10" {
+			// 部分主题拒绝优惠码时不显示错误，只是重新渲染带 promocode 输入框的购物车。
+			fmt.Fprint(w, f.page(`<form><input type="text" name="promocode" placeholder="Enter promo code"/><button name="validatepromo">Validate</button></form>`))
+			return
+		}
 		if code != "SAVE10" {
 			fmt.Fprint(w, f.page(`<div class="alert alert-danger">The promotion code entered does not exist</div>`))
 			return
@@ -170,7 +176,7 @@ func newOrderEnv(t *testing.T, fake *fakeWHMCS, slv solver.Solver) (*Provider, p
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, _ := fetch.NewDirectClient(5*time.Second, "")
+	client, _ := fetch.NewHTTPClient(5*time.Second, "")
 	session, _ := fetch.NewSession(server.URL, nil, "")
 	return instance.(*Provider), provider.Env{Site: site, Client: client, Session: session, Solver: slv, Account: &domain.Account{ID: "acc1"}}
 }
@@ -315,7 +321,7 @@ func TestCheckSessionIgnoresClientAreaLoginRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 	instance, _ := New(domain.Site{BaseURL: server.URL, Config: map[string]string{"groups": "g"}})
-	client, _ := fetch.NewDirectClient(5*time.Second, "")
+	client, _ := fetch.NewHTTPClient(5*time.Second, "")
 	session, _ := fetch.NewSession(server.URL, nil, "")
 	if _, err := instance.(*Provider).CheckSession(context.Background(), provider.Env{Client: client, Session: session}); err != nil {
 		t.Fatalf("store page shows logout, session must be valid: %v", err)
@@ -332,7 +338,7 @@ func TestSessionExpiredOnLoginRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 	instance, _ := New(domain.Site{BaseURL: server.URL, Config: map[string]string{"groups": "x"}})
-	client, _ := fetch.NewDirectClient(5*time.Second, "")
+	client, _ := fetch.NewHTTPClient(5*time.Second, "")
 	session, _ := fetch.NewSession(server.URL, nil, "")
 	_, err := instance.(*Provider).CheckSession(context.Background(), provider.Env{Client: client, Session: session})
 	if !errors.Is(err, provider.ErrSessionExpired) {
@@ -358,13 +364,62 @@ func TestAjaxErrorsAndHiddenTemplate(t *testing.T) {
 	if got := ajaxErrors(parse(full)); got != "" {
 		t.Fatalf("hidden template / nav items must not count as errors, got %q", got)
 	}
-	cart := parse(`<html><body><div class="alert alert-danger">Promo ends soon</div></body></html>`)
-	cart.resp.URL = "https://shop.test/cart.php?a=view"
-	if got := ajaxErrors(cart); got != "" {
-		t.Fatalf("redirect to cart means the item was added, got %q", got)
+	for _, cartURL := range []string{"https://shop.test/cart.php?a=view", "https://shop.test/cart.php?a=checkout", "https://shop.test/cart.php?a=confdomains"} {
+		if !inCart(cartURL) {
+			t.Fatalf("redirect to %s means the item was added", cartURL)
+		}
+	}
+	if inCart("https://shop.test/cart.php?a=confproduct&i=0") {
+		t.Fatal("configure page is not in cart")
 	}
 	visible := `<html><body><div class="alert alert-danger hidden">template</div><div class="alert alert-danger">Out of Stock</div></body></html>`
 	if got := errorMessage(parse(visible).doc); got != "Out of Stock" {
 		t.Fatalf("expected visible error, got %q", got)
+	}
+}
+
+// 页面只是重新渲染了优惠码输入框（name="promocode"），不能当作优惠码已生效。
+func TestQuoteSilentPromoRejectionIsNotValid(t *testing.T) {
+	fake := &fakeWHMCS{inStock: true, silentPromo: true}
+	p, env := newOrderEnv(t, fake, nil)
+	quote, err := p.Quote(context.Background(), env, domain.OrderSpec{ProductID: "41", Cycle: domain.CycleMonthly, Coupon: "BOGUS"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote.CouponValid {
+		t.Fatalf("unconfirmed promo must not be reported valid: %+v", quote)
+	}
+	quote, err = p.Quote(context.Background(), env, domain.OrderSpec{ProductID: "41", Cycle: domain.CycleMonthly, Coupon: "SAVE10"})
+	if err != nil || !quote.CouponValid {
+		t.Fatalf("removepromo link means accepted: %+v %v", quote, err)
+	}
+}
+
+func TestPromoApplied(t *testing.T) {
+	parse := func(body string) *goquery.Document {
+		doc, _ := goquery.NewDocumentFromReader(strings.NewReader(body))
+		return doc
+	}
+	if !promoApplied(parse(`<div class="view-cart-promotion-code">SAVE10 - 10% Recurring</div>`), "save10") {
+		t.Fatal("promo code element must count as applied")
+	}
+	if promoApplied(parse(`<div class="view-cart-promotion-code">OTHER</div><input name="promocode" value="SAVE10"/>`), "SAVE10") {
+		t.Fatal("input value or another code must not count as applied")
+	}
+}
+
+// 商品组页 500 是站点故障，不能当成会话失效触发重登。
+func TestCheckSessionReportsHTTPErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	instance, _ := New(domain.Site{BaseURL: server.URL, Config: map[string]string{"groups": "g"}})
+	client, _ := fetch.NewHTTPClient(5*time.Second, "")
+	session, _ := fetch.NewSession(server.URL, nil, "")
+	_, err := instance.(*Provider).CheckSession(context.Background(), provider.Env{Client: client, Session: session})
+	var httpErr *fetch.HTTPError
+	if !errors.As(err, &httpErr) || errors.Is(err, provider.ErrSessionExpired) {
+		t.Fatalf("want http error, got %v", err)
 	}
 }

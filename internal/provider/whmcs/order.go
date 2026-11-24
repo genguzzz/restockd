@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -40,7 +39,20 @@ func (p *Provider) post(ctx context.Context, env provider.Env, path string, form
 	return p.do(ctx, env, &fetch.Request{Method: http.MethodPost, URL: p.baseURL + path, Form: form})
 }
 
+// do 需要登录的页面：fetchPage 之后落到登录页即视为会话失效。
 func (p *Provider) do(ctx context.Context, env provider.Env, req *fetch.Request) (*page, error) {
+	result, err := fetchPage(ctx, env, req)
+	if err != nil {
+		return nil, err
+	}
+	if isLoginPage(result.doc, result.resp.URL) {
+		return nil, provider.ErrSessionExpired
+	}
+	return result, nil
+}
+
+// fetchPage 发请求、检查状态码并解析 HTML。
+func fetchPage(ctx context.Context, env provider.Env, req *fetch.Request) (*page, error) {
 	resp, err := env.Client.Do(ctx, env.Session, req)
 	if err != nil {
 		return nil, err
@@ -51,9 +63,6 @@ func (p *Provider) do(ctx context.Context, env provider.Env, req *fetch.Request)
 	doc, err := htmlutil.Parse(resp.Body)
 	if err != nil {
 		return nil, err
-	}
-	if isLoginPage(doc, resp.URL) {
-		return nil, provider.ErrSessionExpired
 	}
 	return &page{resp: resp, doc: doc}, nil
 }
@@ -68,14 +77,11 @@ func isLoginPage(doc *goquery.Document, finalURL string) bool {
 // CheckSession 以商品组页面是否带退出链接判断登录态；部分站点 clientarea.php 会强制跳登录页，不可靠。
 // 余额与身份尽力从客户中心读取，读不到不影响结论。
 func (p *Provider) CheckSession(ctx context.Context, env provider.Env) (provider.SessionInfo, error) {
-	resp, err := env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodGet, URL: p.GroupURL(p.groups[0])})
+	group, err := fetchPage(ctx, env, &fetch.Request{Method: http.MethodGet, URL: p.GroupURL(p.groups[0])})
 	if err != nil {
 		return provider.SessionInfo{}, err
 	}
-	doc, err := htmlutil.Parse(resp.Body)
-	if err != nil {
-		return provider.SessionInfo{}, err
-	}
+	doc := group.doc
 	if doc.Find(`a[href*="logout"]`).Length() == 0 {
 		return provider.SessionInfo{}, provider.ErrSessionExpired
 	}
@@ -93,17 +99,17 @@ func (p *Provider) CheckSession(ctx context.Context, env provider.Env) (provider
 
 // Quote 走完 加购 → 配置 → 优惠码 → 结算页，读取应付金额，不提交订单。
 func (p *Provider) Quote(ctx context.Context, env provider.Env, spec domain.OrderSpec) (domain.Quote, error) {
-	_, quote, err := p.prepareCheckout(ctx, env, spec)
+	_, quote, _, err := p.prepareCheckout(ctx, env, spec)
 	return quote, err
 }
 
 // PlaceOrder 锁单：提交结算表单，生成未支付订单与账单（不付款）。
 func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain.OrderSpec) (domain.OrderResult, error) {
-	checkout, quote, err := p.prepareCheckout(ctx, env, spec)
+	checkout, quote, promo, err := p.prepareCheckout(ctx, env, spec)
 	if err != nil {
 		return domain.OrderResult{}, err
 	}
-	if spec.Coupon != "" && !quote.CouponValid && quote.Message != promoUnconfirmed {
+	if spec.Coupon != "" && promo == promoRejected {
 		return domain.OrderResult{Total: quote.Total}, fmt.Errorf("%w: %s: %s", provider.ErrCouponInvalid, spec.Coupon, quote.Message)
 	}
 	if spec.DryRun {
@@ -134,32 +140,33 @@ func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain
 	return parseCompletion(done, p.baseURL, quote)
 }
 
-// prepareCheckout 清空购物车并把目标商品放入，应用优惠码，返回结算页与报价。
-func (p *Provider) prepareCheckout(ctx context.Context, env provider.Env, spec domain.OrderSpec) (*page, domain.Quote, error) {
+// prepareCheckout 清空购物车并把目标商品放入，应用优惠码，返回结算页、报价与优惠码结果（无优惠码为 promoUnknown）。
+func (p *Provider) prepareCheckout(ctx context.Context, env provider.Env, spec domain.OrderSpec) (*page, domain.Quote, promoResult, error) {
 	if err := p.emptyCart(ctx, env); err != nil {
-		return nil, domain.Quote{}, fmt.Errorf("empty cart: %w", err)
+		return nil, domain.Quote{}, promoUnknown, fmt.Errorf("empty cart: %w", err)
 	}
 	if err := p.addProduct(ctx, env, spec); err != nil {
-		return nil, domain.Quote{}, err
+		return nil, domain.Quote{}, promoUnknown, err
 	}
 	quote := domain.Quote{}
+	promo := promoUnknown
 	if spec.Coupon != "" {
-		valid, message, err := p.applyPromo(ctx, env, spec.Coupon)
+		var err error
+		promo, quote.Message, err = p.applyPromo(ctx, env, spec.Coupon)
 		if err != nil {
-			return nil, domain.Quote{}, fmt.Errorf("apply promo: %w", err)
+			return nil, domain.Quote{}, promoUnknown, fmt.Errorf("apply promo: %w", err)
 		}
-		quote.CouponValid = valid
-		quote.Message = message
+		quote.CouponValid = promo == promoAccepted
 	}
 	checkout, err := p.get(ctx, env, "/cart.php?a=checkout")
 	if err != nil {
-		return nil, domain.Quote{}, fmt.Errorf("checkout page: %w", err)
+		return nil, domain.Quote{}, promoUnknown, fmt.Errorf("checkout page: %w", err)
 	}
 	if checkout.doc.Find(`#frmCheckout, form[name="orderfrm"], form[action*="a=checkout"]`).Length() == 0 {
-		return nil, domain.Quote{}, fmt.Errorf("checkout form not found (cart empty or product unavailable)")
+		return nil, domain.Quote{}, promoUnknown, fmt.Errorf("checkout form not found (cart empty or product unavailable)")
 	}
 	fillTotals(checkout.doc, p.currency, &quote)
-	return checkout, quote, nil
+	return checkout, quote, promo, nil
 }
 
 // emptyCart 无条件清空购物车：部分主题 a=view 会直接跳转结算页，按条目判断不可靠。
@@ -174,8 +181,6 @@ func (p *Provider) emptyCart(ctx context.Context, env provider.Env) error {
 	return err
 }
 
-var outOfStockPattern = regexp.MustCompile(`(?i)out of stock|currently unavailable|缺货|售罄|库存不足`)
-
 func (p *Provider) addProduct(ctx context.Context, env provider.Env, spec domain.OrderSpec) error {
 	query := url.Values{"a": {"add"}, "pid": {spec.ProductID}}
 	if spec.Cycle != "" {
@@ -187,7 +192,7 @@ func (p *Provider) addProduct(ctx context.Context, env provider.Env, spec domain
 	}
 	form := conf.doc.Find("#frmConfigureProduct, form[action*='confproduct']").First()
 	if form.Length() == 0 {
-		if strings.Contains(conf.resp.URL, "a=view") || strings.Contains(conf.resp.URL, "a=confdomains") {
+		if inCart(conf.resp.URL) {
 			return nil
 		}
 		if outOfStockPattern.Match(conf.resp.Body) {
@@ -219,6 +224,10 @@ func (p *Provider) addProduct(ctx context.Context, env provider.Env, spec domain
 	if err != nil {
 		return fmt.Errorf("configure product: %w", err)
 	}
+	// 忽略 ajax 的主题会跳转：落到购物车 / 结算 / 域名页即已入车，页面上的提示不是配置错误。
+	if inCart(result.resp.URL) {
+		return nil
+	}
 	if message := ajaxErrors(result); message != "" {
 		if outOfStockPattern.MatchString(message) {
 			return provider.ErrOutOfStock
@@ -228,17 +237,21 @@ func (p *Provider) addProduct(ctx context.Context, env provider.Env, spec domain
 	return nil
 }
 
+// inCart 落在购物车 / 结算 / 域名页，说明商品已入车。
+func inCart(pageURL string) bool {
+	for _, marker := range []string{"a=view", "a=checkout", "a=confdomains"} {
+		if strings.Contains(pageURL, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // ajaxErrors 解析 a=confproduct&ajax=1 的响应：空表示通过，否则拼接各条 <li> 错误。
 // 若站点忽略 ajax 返回了整页，则只看可见的错误提示（整页里的导航 <li> 不能当错误）。
 func ajaxErrors(result *page) string {
 	doc := result.doc
 	if bytes.Contains(bytes.ToLower(result.resp.Body), []byte("<body")) {
-		// 忽略 ajax 的主题会跳转：落到购物车 / 结算 / 域名页即已入车，页面上的提示不是配置错误。
-		for _, marker := range []string{"a=view", "a=checkout", "a=confdomains"} {
-			if strings.Contains(result.resp.URL, marker) {
-				return ""
-			}
-		}
 		return errorMessage(doc)
 	}
 	var messages []string
@@ -258,13 +271,13 @@ func applyServerFields(values url.Values, spec domain.OrderSpec) {
 	if _, ok := values["hostname"]; ok && (values.Get("hostname") == "" || spec.Hostname != "") {
 		hostname := spec.Hostname
 		if hostname == "" {
-			hostname = "vps-" + randomHex(3) + ".local"
+			hostname = "vps-" + strings.ToLower(rand.Text()[:6]) + ".local"
 		}
 		values.Set("hostname", hostname)
 	}
 	// 部分主题 HTML 里 rootpw 预填 "N/A"，靠前端 JS 生成真实密码。
 	if _, ok := values["rootpw"]; ok && (values.Get("rootpw") == "" || strings.EqualFold(values.Get("rootpw"), "N/A")) {
-		values.Set("rootpw", "Rk"+randomHex(8)+"#9")
+		values.Set("rootpw", "Rk"+rand.Text()[:16]+"#9")
 	}
 	if _, ok := values["ns1prefix"]; ok && values.Get("ns1prefix") == "" {
 		values.Set("ns1prefix", "ns1")
@@ -274,28 +287,51 @@ func applyServerFields(values url.Values, spec domain.OrderSpec) {
 	}
 }
 
-func (p *Provider) applyPromo(ctx context.Context, env provider.Env, code string) (bool, string, error) {
+// promoResult 优惠码校验结果。
+type promoResult int
+
+const (
+	// promoUnknown 页面没有明确拒绝也没有明确接受：不阻止下单，交给结算页金额体现。
+	promoUnknown promoResult = iota
+	promoAccepted
+	promoRejected
+)
+
+// promoCodeSelector 主题里展示已应用优惠码的元素。
+// 不能看页面是否含 "promo"：输入框 name="promocode" 永远在页面上。
+const promoCodeSelector = `.promo-code, .view-cart-promotion-code, .promotion-code, .promo-code-applied`
+
+func (p *Provider) applyPromo(ctx context.Context, env provider.Env, code string) (promoResult, string, error) {
 	view, err := p.get(ctx, env, "/cart.php?a=view")
 	if err != nil {
-		return false, "", err
+		return promoUnknown, "", err
 	}
 	token := htmlutil.CSRFToken(view.doc, view.resp.Body)
 	result, err := p.post(ctx, env, "/cart.php?a=view", url.Values{"token": {token}, "promocode": {code}, "validatepromo": {"Validate Code"}})
 	if err != nil {
-		return false, "", err
+		return promoUnknown, "", err
 	}
 	if message := errorMessage(result.doc); message != "" {
-		return false, message, nil
+		return promoRejected, message, nil
 	}
-	body := strings.ToLower(string(result.resp.Body))
-	if strings.Contains(body, strings.ToLower(code)) && (strings.Contains(body, "removepromo") || strings.Contains(body, "promotion code accepted") || strings.Contains(body, "promo")) {
-		return true, "promo applied", nil
+	if promoApplied(result.doc, code) {
+		return promoAccepted, "promo applied", nil
 	}
-	return false, promoUnconfirmed, nil
+	return promoUnknown, "promo not confirmed by page", nil
 }
 
-// promoUnconfirmed 页面没有明确拒绝也没有明确接受：不阻止下单，交给结算页金额体现。
-const promoUnconfirmed = "promo not confirmed by page"
+// promoApplied 购物车出现移除优惠码链接，或展示优惠码的元素里写着这个码。
+func promoApplied(doc *goquery.Document, code string) bool {
+	if doc.Find(`a[href*="removepromo"]`).Length() > 0 {
+		return true
+	}
+	applied := false
+	doc.Find(promoCodeSelector).EachWithBreak(func(_ int, node *goquery.Selection) bool {
+		applied = strings.Contains(strings.ToLower(node.Text()), strings.ToLower(code))
+		return !applied
+	})
+	return applied
+}
 
 // errorMessage 取第一条可见的错误提示；跳过主题常驻的隐藏模板（.hidden / .d-none / display:none）。
 func errorMessage(doc *goquery.Document) string {
@@ -352,24 +388,24 @@ func (p *Provider) checkoutForm(ctx context.Context, env provider.Env, checkout 
 		return nil, err
 	}
 	values.Set("paymentmethod", gateway)
-	if kind, siteKey, found := htmlutil.DetectCaptcha(checkout.doc); found {
-		if env.Solver == nil {
-			return nil, fmt.Errorf("checkout requires %s but no solver configured", kind)
-		}
-		solution, err := env.Solver.Solve(ctx, solver.Challenge{Kind: kind, SiteKey: siteKey, PageURL: p.baseURL + "/cart.php?a=checkout", SiteID: env.Site.ID, AccountID: accountID(env), Purpose: fmt.Sprintf("%s 锁单 pid=%s", env.Site.Name, spec.ProductID)})
-		if err != nil {
-			return nil, fmt.Errorf("solve %s: %w", kind, err)
-		}
-		values.Set(htmlutil.CaptchaField(kind), solution.Token)
+	if err := solveCaptcha(ctx, env, checkout.doc, values, p.baseURL+"/cart.php?a=checkout", fmt.Sprintf("%s 锁单 pid=%s", env.Site.Name, spec.ProductID)); err != nil {
+		return nil, err
 	}
 	return values, nil
 }
 
-func accountID(env provider.Env) string {
-	if env.Account == nil {
-		return ""
+// solveCaptcha 页面带验证码时交给 Solver，并把 token 写入对应表单字段；没有验证码直接返回。
+func solveCaptcha(ctx context.Context, env provider.Env, doc *goquery.Document, values url.Values, pageURL, purpose string) error {
+	kind, siteKey, found := htmlutil.DetectCaptcha(doc)
+	if !found {
+		return nil
 	}
-	return env.Account.ID
+	solution, err := env.Solve(ctx, solver.Challenge{Kind: kind, SiteKey: siteKey, PageURL: pageURL, Purpose: purpose})
+	if err != nil {
+		return err
+	}
+	values.Set(htmlutil.CaptchaField(kind), solution.Token)
+	return nil
 }
 
 func pickGateway(form *goquery.Selection, preferred string) (string, error) {
@@ -427,10 +463,4 @@ func parseCompletion(done *page, baseURL string, quote domain.Quote) (domain.Ord
 	}
 	result.Message = "order placed, invoice unpaid"
 	return result, nil
-}
-
-func randomHex(n int) string {
-	buf := make([]byte, n)
-	_, _ = rand.Read(buf)
-	return hex.EncodeToString(buf)
 }

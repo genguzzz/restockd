@@ -65,7 +65,7 @@ func newLoginEnv(t *testing.T, server *httptest.Server) (*Provider, provider.Env
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, _ := fetch.NewDirectClient(5*time.Second, "")
+	client, _ := fetch.NewHTTPClient(5*time.Second, "")
 	session, _ := fetch.NewSession(server.URL, nil, "")
 	return instance.(*Provider), provider.Env{Site: domain.Site{ID: "aa", Name: "AA", BaseURL: server.URL}, Client: client, Session: session}
 }

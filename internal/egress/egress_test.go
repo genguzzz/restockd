@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,8 +113,8 @@ func TestConnectFailureCoolsRouteForAllSites(t *testing.T) {
 	backup := &stubClient{result: func(*fetch.Request) (*fetch.Response, error) { return ok() }}
 	session, _ := fetch.NewSession("https://shop.test", nil, "")
 	for _, site := range []string{"s1", "s2"} {
-		client := &Client{SiteID: site, Routes: []Route{{ID: "a", Client: down}, {ID: "b", Client: backup}}, Health: health}
-		if _, err := client.Do(context.Background(), session, &fetch.Request{URL: "https://shop.test/"}); err != nil {
+		client := &Client{SiteID: site, Routes: []Route{{ID: "a", Client: down, Proxy: "http://127.0.0.1:1"}, {ID: "b", Client: backup}}, Health: health}
+		if _, err := client.Do(context.Background(), session, &fetch.Request{URL: "https://" + site + ".test/"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -121,9 +123,128 @@ func TestConnectFailureCoolsRouteForAllSites(t *testing.T) {
 	}
 }
 
+// 直连拨号失败说明目标站点挂了：只冷却该 host，其它站点照常直连。
+func TestDirectDialFailureCoolsOnlyThatHost(t *testing.T) {
+	health := NewHealth()
+	dialFailed := &url.Error{Op: "Get", URL: "https://down.test/", Err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}}
+	direct := &stubClient{result: func(req *fetch.Request) (*fetch.Response, error) {
+		if strings.Contains(req.URL, "down.test") {
+			return nil, dialFailed
+		}
+		return ok()
+	}}
+	session, _ := fetch.NewSession("https://down.test", nil, "")
+	client := &Client{SiteID: "s1", Routes: []Route{{ID: Direct, Client: direct}}, Health: health}
+	if _, err := client.Do(context.Background(), session, &fetch.Request{URL: "https://down.test/"}); err == nil {
+		t.Fatal("want dial error")
+	}
+	if wait := health.Cooling("s1", Direct, "https://down.test/x"); wait <= 0 {
+		t.Fatal("the unreachable host should cool down")
+	}
+	other := &Client{SiteID: "s2", Routes: []Route{{ID: Direct, Client: direct}}, Health: health}
+	if _, err := other.Do(context.Background(), session, &fetch.Request{URL: "https://up.test/"}); err != nil {
+		t.Fatalf("other sites must keep using direct: %v", err)
+	}
+}
+
+func TestRateLimitWithoutRetryAfterUsesDefaultCooldown(t *testing.T) {
+	health := NewHealth()
+	only := &stubClient{result: func(*fetch.Request) (*fetch.Response, error) {
+		return &fetch.Response{StatusCode: 429}, &fetch.RateLimitError{}
+	}}
+	session, _ := fetch.NewSession("https://shop.test", nil, "")
+	client := &Client{SiteID: "s", Routes: []Route{{ID: "a", Client: only}}, Health: health}
+	_, _ = client.Do(context.Background(), session, &fetch.Request{URL: "https://shop.test/orders/create"})
+	if wait := health.Cooling("s", "a", "https://shop.test/orders/create"); wait < 59*time.Minute {
+		t.Fatalf("missing Retry-After must cool for the default hour, got %s", wait)
+	}
+	client.RateLimitCooldown = 6 * time.Hour
+	client.Health = NewHealth()
+	_, _ = client.Do(context.Background(), session, &fetch.Request{URL: "https://shop.test/orders/create"})
+	if wait := client.Health.Cooling("s", "a", "https://shop.test/orders/create"); wait < 5*time.Hour {
+		t.Fatalf("site-specific cooldown not applied, got %s", wait)
+	}
+}
+
+func TestHealthPrunesExpiredKeys(t *testing.T) {
+	health := NewHealth()
+	now := time.Now()
+	health.now = func() time.Time { return now }
+	health.cool(coolKey{route: "a"}, time.Minute)
+	health.cool(coolKey{route: "b"}, time.Hour)
+	now = now.Add(2 * time.Minute)
+	health.cool(coolKey{route: "c"}, time.Minute)
+	if len(health.until) != 2 {
+		t.Fatalf("expired keys must be dropped, got %v", health.until)
+	}
+	if health.Cooling("s", "b", "https://x/") <= 0 || health.Cooling("s", "a", "https://x/") != 0 {
+		t.Fatal("unexpected cooling state")
+	}
+}
+
+type stubBrowser struct {
+	proxies []string
+	reqs    []*fetch.Request
+}
+
+func (b *stubBrowser) Do(_ context.Context, session *fetch.Session, req *fetch.Request, proxyURL string) (*fetch.Response, error) {
+	b.proxies = append(b.proxies, proxyURL)
+	b.reqs = append(b.reqs, req)
+	session.SetCookies([]*http.Cookie{{Name: "cf_clearance", Value: "ok"}})
+	return &fetch.Response{StatusCode: 200, Body: []byte("browser")}, nil
+}
+
+func TestBrowserSolvesChallengeOnSameRoute(t *testing.T) {
+	route := &stubClient{result: func(req *fetch.Request) (*fetch.Response, error) {
+		if req.JSON != nil {
+			return &fetch.Response{StatusCode: 200, Body: []byte("http")}, nil
+		}
+		return &fetch.Response{StatusCode: 403}, &fetch.ChallengeError{Kind: "cloudflare", URL: req.URL}
+	}}
+	browser := &stubBrowser{}
+	client := &Client{SiteID: "s", Routes: []Route{{ID: "p", Client: route, Proxy: "socks5://127.0.0.1:1080"}}, Health: NewHealth(), Browser: browser}
+	session, _ := fetch.NewSession("https://shop.test", nil, "")
+	resp, err := client.Do(context.Background(), session, &fetch.Request{URL: "https://shop.test/store"})
+	if err != nil || string(resp.Body) != "browser" || browser.proxies[0] != "socks5://127.0.0.1:1080" {
+		t.Fatalf("plain GET must be served by the browser through the route proxy: %v %v", err, browser.proxies)
+	}
+	// JSON 请求浏览器发不了：浏览器只过质询，再用原客户端重发。
+	route.result = func(req *fetch.Request) (*fetch.Response, error) {
+		if session.Cookie("cf_clearance") == "ok" {
+			return &fetch.Response{StatusCode: 200, Body: []byte("http")}, nil
+		}
+		return &fetch.Response{StatusCode: 403}, &fetch.ChallengeError{Kind: "cloudflare", URL: req.URL}
+	}
+	session, _ = fetch.NewSession("https://shop.test", nil, "")
+	resp, err = client.Do(context.Background(), session, &fetch.Request{Method: "POST", URL: "https://shop.test/api", JSON: []byte(`{}`)})
+	if err != nil || string(resp.Body) != "http" || browser.reqs[1].Method != "GET" || browser.reqs[1].JSON != nil {
+		t.Fatalf("json request must be resent by the route client after clearance: %v %+v", err, browser.reqs[1])
+	}
+}
+
+func TestRegistryApplyEvictsClientsAndResetsCooling(t *testing.T) {
+	health := NewHealth()
+	registry := NewRegistry(&stubClient{}, time.Second, health)
+	registry.Apply(Settings{Proxies: []Proxy{{ID: "p", URL: "http://127.0.0.1:1", Enabled: true}, {ID: "q", URL: "http://127.0.0.1:2", Enabled: true}}})
+	_, _ = registry.Route("p")
+	_, _ = registry.Route("q")
+	health.cool(coolKey{route: "p"}, time.Hour)
+	health.cool(coolKey{route: "q"}, time.Hour)
+	registry.Apply(Settings{Proxies: []Proxy{{ID: "p", URL: "http://127.0.0.1:3", Enabled: true}, {ID: "q", URL: "http://127.0.0.1:2", Enabled: true}}})
+	if len(registry.clients) != 1 {
+		t.Fatalf("clients for unregistered urls must be dropped, got %d", len(registry.clients))
+	}
+	if health.Cooling("s", "p", "https://x/") != 0 {
+		t.Fatal("a proxy whose url changed is a new egress and must not stay cooling")
+	}
+	if health.Cooling("s", "q", "https://x/") <= 0 {
+		t.Fatal("unchanged proxy must keep its cooldown")
+	}
+}
+
 func TestRegistryRoutes(t *testing.T) {
 	direct := &stubClient{result: func(*fetch.Request) (*fetch.Response, error) { return ok() }}
-	registry := NewRegistry(direct, time.Second)
+	registry := NewRegistry(direct, time.Second, NewHealth())
 	registry.Apply(Settings{Proxies: []Proxy{
 		{ID: "dmit", Name: "dmit LA", URL: "socks5://127.0.0.1:10820", Enabled: true},
 		{ID: "off", URL: "http://127.0.0.1:1", Enabled: false},

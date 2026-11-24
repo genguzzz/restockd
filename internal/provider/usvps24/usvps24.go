@@ -7,9 +7,9 @@
 package usvps24
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,19 +48,19 @@ func meta() provider.Meta {
 		DefaultInterval: 70 * time.Second,
 		DefaultFetch:    domain.FetchDirect,
 		Captcha:         []solver.Kind{solver.KindTurnstile},
+		// 页面被封约 6 小时且 429 不带 Retry-After：提前重试只会让站点重新计时。
+		RateLimitCooldown: 6 * time.Hour,
 		ConfigFields: []provider.Field{
-			{Key: "products", Label: "只看这些商品", Type: provider.FieldList, Placeholder: "pinnacle-network-2,home-pool", Help: "填 slug（商品 ID 即 slug），留空表示全部"},
+			{Key: "products", Label: "只看这些商品", Type: provider.FieldList, Placeholder: "pinnacle-network-2,home-pool", Help: "填 slug（商品 ID 即 slug），逗号或换行分隔，留空表示全部"},
 		},
 	}
 }
 
-// Provider usvps24 实现；version 缓存 Inertia 资源版本，版本不符时服务端返回 409；
-// props 缓存最近一次下单页数据，用于补全库存接口没有的周期价与配置项。
+// Provider usvps24 实现；props 缓存最近一次下单页数据，用于补全库存接口没有的周期价与配置项。
 type Provider struct {
 	baseURL string
 	only    map[string]bool
 	mu      sync.RWMutex
-	version string
 	props   *checkoutProps
 }
 
@@ -69,17 +71,11 @@ var (
 
 // New 构造实例。
 func New(site domain.Site) (provider.Provider, error) {
-	base := strings.TrimRight(site.BaseURL, "/")
-	if base == "" {
-		base = "https://usvps24.com"
-	}
 	only := map[string]bool{}
-	for _, item := range strings.Split(site.Config["products"], ",") {
-		if item = strings.TrimSpace(item); item != "" {
-			only[item] = true
-		}
+	for _, slug := range provider.SplitList(site.Config["products"]) {
+		only[slug] = true
 	}
-	return &Provider{baseURL: base, only: only}, nil
+	return &Provider{baseURL: cmp.Or(strings.TrimRight(site.BaseURL, "/"), "https://usvps24.com"), only: only}, nil
 }
 
 // Meta 实现 provider.Provider。
@@ -206,30 +202,25 @@ func (p *Provider) Catalog(ctx context.Context, env provider.Env) (domain.Catalo
 	return p.stockCatalog(&stock), nil
 }
 
-// stockCatalog 以库存接口为准（ID 用 slug），有下单页缓存时补全周期价、配置项与系统模板。
+// stockCatalog 以库存接口为准（ID 用 slug，也只按 slug 过滤），有下单页缓存时补全周期价、配置项、系统模板、
+// 支付方式与促销。
 func (p *Provider) stockCatalog(stock *stockResponse) domain.Catalog {
 	now := time.Now().UTC()
-	catalog := domain.Catalog{}
-	enriched := map[string]domain.Product{}
-	if props := p.cachedProps(); props != nil {
-		cached := p.toCatalog(props)
-		catalog.Gateways, catalog.Promo = cached.Gateways, cached.Promo
-		for _, product := range cached.Products {
-			enriched[product.Specs.Extra["slug"]] = product
+	props := p.cachedProps()
+	catalog := catalogExtras(props)
+	bySlug := map[string]rawProduct{}
+	if props != nil {
+		for _, raw := range props.Products {
+			bySlug[raw.Slug] = raw
 		}
 	}
 	for _, plan := range stock.Plans {
-		product := p.planProduct(plan, now)
-		if rich, ok := enriched[plan.Slug]; ok {
-			product.Prices = rich.Prices
-			product.Options = rich.Options
-			product.OSTemplates = rich.OSTemplates
-			product.NoDiscount = rich.NoDiscount
-			product.Specs.Extra["product_id"] = rich.ID
-		}
-		// 只按 slug 过滤：数字 ID 依赖下单页缓存，重启后为空会把商品全部滤掉。
 		if len(p.only) > 0 && !p.only[plan.Slug] {
 			continue
+		}
+		product := p.planProduct(plan, now)
+		if raw, ok := bySlug[plan.Slug]; ok {
+			enrich(&product, raw)
 		}
 		catalog.Products = append(catalog.Products, product)
 	}
@@ -239,8 +230,8 @@ func (p *Provider) stockCatalog(stock *stockResponse) domain.Catalog {
 func (p *Provider) planProduct(plan stockPlan, now time.Time) domain.Product {
 	product := domain.Product{
 		ID:        plan.Slug,
-		Name:      firstNonEmpty(strings.TrimSpace(plan.Name), plan.Slug),
-		URL:       firstNonEmpty(plan.URL, p.baseURL+"/plans/"+plan.Slug),
+		Name:      cmp.Or(strings.TrimSpace(plan.Name), plan.Slug),
+		URL:       cmp.Or(plan.URL, p.baseURL+"/plans/"+plan.Slug),
 		FetchedAt: now,
 		Stock:     planStock(plan),
 		Specs: domain.Specs{
@@ -277,6 +268,7 @@ func yuanToCents(value float64) int64 { return int64(value*100 + 0.5) }
 
 // planStock 映射接口状态。invite_only 仍有余量时记为有货（会员账号可下单），Reason 标注邀请制。
 func planStock(plan stockPlan) domain.Stock {
+	zero := 0
 	switch plan.Status {
 	case "in_stock":
 		return domain.Stock{Status: domain.StockIn, Qty: positive(plan.Stock)}
@@ -286,156 +278,38 @@ func planStock(plan stockPlan) domain.Stock {
 		if plan.Stock > 0 {
 			return domain.Stock{Status: domain.StockIn, Qty: positive(plan.Stock), Reason: "invite_only"}
 		}
-		zero := 0
 		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: "invite_only"}
 	case "coming_soon":
 		return domain.Stock{Status: domain.StockClosed, Reason: "coming_soon"}
 	case "sold_out":
-		zero := 0
 		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: "sold_out"}
 	default:
 		if plan.Purchasable && plan.Stock > 0 {
 			return domain.Stock{Status: domain.StockIn, Qty: positive(plan.Stock), Reason: plan.Status}
 		}
-		zero := 0
-		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: firstNonEmpty(plan.Status, "unavailable")}
+		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: cmp.Or(plan.Status, "unavailable")}
 	}
 }
 
-func (p *Provider) cachedProps() *checkoutProps {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.props
-}
-
-// loadCheckout 优先用 Inertia JSON（体积小）；版本不匹配或首次访问时解析 HTML 中的 data-page。
-func (p *Provider) loadCheckout(ctx context.Context, env provider.Env) (*checkoutProps, error) {
-	resp, err := env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodGet, URL: p.baseURL + "/orders/create", Header: p.inertiaHeader(env.Session)})
-	if err != nil {
-		return nil, err // 429 由出口层记录冷却并换线；所有出口都冷却时不再发请求
+// catalogExtras 下单页里与单个商品无关的目录信息：支付方式与全站促销。
+func catalogExtras(props *checkoutProps) domain.Catalog {
+	if props == nil {
+		return domain.Catalog{}
 	}
-	if resp.StatusCode == http.StatusConflict {
-		p.setVersion("")
-		resp, err = env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodGet, URL: p.baseURL + "/orders/create"})
-		if err != nil {
-			return nil, err
-		}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, &fetch.HTTPError{StatusCode: resp.StatusCode, URL: resp.URL}
-	}
-	data, err := ParsePage(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	p.setVersion(data.Version)
-	var props checkoutProps
-	if err := json.Unmarshal(data.Props, &props); err != nil {
-		return nil, fmt.Errorf("decode props: %w", err)
-	}
-	if len(props.Products) > 0 {
-		p.mu.Lock()
-		p.props = &props
-		p.mu.Unlock()
-	}
-	return &props, nil
-}
-
-var dataPagePattern = regexp.MustCompile(`data-page="([^"]+)"`)
-
-// ParsePage 同时支持 Inertia JSON 响应与 HTML 首屏。
-func ParsePage(body []byte) (*pageData, error) {
-	trimmed := strings.TrimSpace(string(body))
-	raw := trimmed
-	if !strings.HasPrefix(trimmed, "{") {
-		match := dataPagePattern.FindStringSubmatch(trimmed)
-		if match == nil {
-			return nil, errors.New("inertia data-page not found")
-		}
-		raw = html.UnescapeString(match[1])
-	}
-	var data pageData
-	if err := json.Unmarshal([]byte(raw), &data); err != nil {
-		return nil, fmt.Errorf("decode inertia page: %w", err)
-	}
-	return &data, nil
-}
-
-func (p *Provider) inertiaHeader(session *fetch.Session) http.Header {
-	header := http.Header{"X-Requested-With": {"XMLHttpRequest"}, "Accept": {"text/html, application/xhtml+xml"}}
-	if version := p.getVersion(); version != "" {
-		header.Set("X-Inertia", "true")
-		header.Set("X-Inertia-Version", version)
-	}
-	if token := xsrfToken(session); token != "" {
-		header.Set("X-XSRF-TOKEN", token)
-	}
-	return header
-}
-
-func xsrfToken(session *fetch.Session) string {
-	raw := session.Cookie("XSRF-TOKEN")
-	if decoded, err := url.QueryUnescape(raw); err == nil {
-		return decoded
-	}
-	return raw
-}
-
-func (p *Provider) getVersion() string {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.version
-}
-
-func (p *Provider) setVersion(version string) {
-	p.mu.Lock()
-	p.version = version
-	p.mu.Unlock()
-}
-
-func (p *Provider) toCatalog(props *checkoutProps) domain.Catalog {
-	now := time.Now().UTC()
 	catalog := domain.Catalog{Gateways: props.Gateways}
 	if props.Promo != nil && props.Promo.Code != "" {
 		catalog.Promo = &domain.Promo{Code: props.Promo.Code, Percent: props.Promo.Percent, StartsAt: time.UnixMilli(props.Promo.StartsAt).UTC(), EndsAt: time.UnixMilli(props.Promo.EndsAt).UTC()}
-	}
-	for _, raw := range props.Products {
-		id := strconv.FormatInt(raw.ID, 10)
-		if len(p.only) > 0 && !p.only[id] && !p.only[raw.Slug] {
-			continue
-		}
-		catalog.Products = append(catalog.Products, p.toProduct(raw, now))
 	}
 	return catalog
 }
 
 var optionLabels = map[string]string{"bandwidth_mbps": "带宽 (Mbps)", "ip_count": "IP 数量"}
 
-func (p *Provider) toProduct(raw rawProduct, now time.Time) domain.Product {
-	product := domain.Product{
-		ID:         strconv.FormatInt(raw.ID, 10),
-		Name:       firstNonEmpty(strings.TrimSpace(raw.Name), raw.Slug),
-		URL:        p.baseURL + "/plans/" + raw.Slug,
-		NoDiscount: raw.NoDiscount,
-		FetchedAt:  now,
-		Stock:      toStock(raw),
-		Specs: domain.Specs{
-			CPU:           asString(raw.Specs["cpu"]),
-			RAMMB:         asInt(raw.Specs["ram_mb"]),
-			DiskGB:        asInt(raw.Specs["disk_gb"]),
-			BandwidthMbps: asInt(raw.Specs["bandwidth_mbps"]),
-			TrafficGB:     asInt(raw.Specs["traffic_gb"]),
-			Location:      firstNonEmpty(asString(raw.Specs["location"]), raw.Region),
-			IPType:        asString(raw.Specs["ip_type"]),
-			Extra:         map[string]string{"slug": raw.Slug},
-		},
-	}
-	if raw.Region != "" {
-		product.Specs.Extra["region"] = raw.Region
-	}
-	if badge := asString(raw.Specs["line_badge"]); badge != "" {
-		product.Specs.Extra["line"] = badge
-	}
+// enrich 用下单页数据补全库存接口没有的字段：各周期价、配置项、系统模板、是否可叠加优惠、数字商品 ID。
+func enrich(product *domain.Product, raw rawProduct) {
+	product.NoDiscount = raw.NoDiscount
+	product.Specs.Extra["product_id"] = strconv.FormatInt(raw.ID, 10)
+	product.Prices = nil
 	for _, cycle := range raw.BillingCycles {
 		product.Prices = append(product.Prices, domain.Price{
 			Cycle:  domain.BillingCycle(cycle.Period),
@@ -444,6 +318,7 @@ func (p *Provider) toProduct(raw rawProduct, now time.Time) domain.Product {
 			RefID:  strconv.FormatInt(cycle.ID, 10),
 		})
 	}
+	product.Options = nil
 	for _, key := range []string{"bandwidth_mbps", "ip_count"} {
 		choices, ok := raw.ConfigOptions[key]
 		if !ok {
@@ -456,25 +331,9 @@ func (p *Provider) toProduct(raw rawProduct, now time.Time) domain.Product {
 		}
 		product.Options = append(product.Options, option)
 	}
+	product.OSTemplates = nil
 	for _, template := range raw.OSTemplates {
 		product.OSTemplates = append(product.OSTemplates, domain.Choice{Value: template.Value, Label: template.Label})
-	}
-	return product
-}
-
-func toStock(raw rawProduct) domain.Stock {
-	switch {
-	case raw.Available && raw.IsPreorder:
-		return domain.Stock{Status: domain.StockPreorder, Qty: positive(raw.MaxQty)}
-	case raw.Available:
-		return domain.Stock{Status: domain.StockIn, Qty: positive(raw.MaxQty)}
-	case raw.ComingSoon:
-		return domain.Stock{Status: domain.StockClosed, Reason: "coming_soon"}
-	case raw.UnavailableReason == "closed":
-		return domain.Stock{Status: domain.StockClosed, Reason: "closed"}
-	default:
-		zero := 0
-		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: raw.UnavailableReason}
 	}
 }
 
@@ -510,27 +369,108 @@ func asInt(value any) int {
 	}
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
+func (p *Provider) cachedProps() *checkoutProps {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.props
+}
+
+// getPage 以普通页面请求读取 Inertia 首屏（HTML 里的 data-page）；返回的 Version 供随后的 Inertia 提交使用。
+// 不缓存版本：这些页面很少访问，每次读首屏即拿到当前版本，避免版本过期导致 409。
+func (p *Provider) getPage(ctx context.Context, env provider.Env, path string) (*pageData, error) {
+	resp, err := env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodGet, URL: p.baseURL + path})
+	if err != nil {
+		return nil, err // 429 由出口层记录冷却并换线；所有出口都冷却时不再发请求
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, &fetch.HTTPError{StatusCode: resp.StatusCode, URL: resp.URL}
+	}
+	return ParsePage(resp.Body)
+}
+
+// loadCheckout 读取下单页数据并缓存（补全目录用），同时返回 Inertia 版本。
+func (p *Provider) loadCheckout(ctx context.Context, env provider.Env) (*checkoutProps, string, error) {
+	data, err := p.getPage(ctx, env, "/orders/create")
+	if err != nil {
+		return nil, "", err
+	}
+	var props checkoutProps
+	if err := json.Unmarshal(data.Props, &props); err != nil {
+		return nil, "", fmt.Errorf("decode props: %w", err)
+	}
+	if len(props.Products) > 0 {
+		p.mu.Lock()
+		p.props = &props
+		p.mu.Unlock()
+	}
+	return &props, data.Version, nil
+}
+
+var dataPagePattern = regexp.MustCompile(`data-page="([^"]+)"`)
+
+// ParsePage 同时支持 Inertia JSON 响应与 HTML 首屏。
+func ParsePage(body []byte) (*pageData, error) {
+	trimmed := strings.TrimSpace(string(body))
+	raw := trimmed
+	if !strings.HasPrefix(trimmed, "{") {
+		match := dataPagePattern.FindStringSubmatch(trimmed)
+		if match == nil {
+			return nil, errors.New("inertia data-page not found")
+		}
+		raw = html.UnescapeString(match[1])
+	}
+	var data pageData
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		return nil, fmt.Errorf("decode inertia page: %w", err)
+	}
+	return &data, nil
+}
+
+func xsrfToken(session *fetch.Session) string {
+	raw := session.Cookie("XSRF-TOKEN")
+	if decoded, err := url.QueryUnescape(raw); err == nil {
+		return decoded
+	}
+	return raw
+}
+
+// laravelErrors Laravel 校验错误 {"email": "…"} 或 {"items.0": ["…"]}，按键排序展开为消息列表。
+func laravelErrors(errs map[string]any) []string {
+	keys := make([]string, 0, len(errs))
+	for key := range errs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var messages []string
+	for _, key := range keys {
+		switch value := errs[key].(type) {
+		case string:
+			messages = append(messages, value)
+		case []any:
+			for _, item := range value {
+				messages = append(messages, asString(item))
+			}
 		}
 	}
-	return ""
+	return slices.DeleteFunc(messages, func(message string) bool { return message == "" })
+}
+
+func first(messages []string) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	return messages[0]
 }
 
 // CheckSession 已登录时 isGuest=false，并带出余额。
 func (p *Provider) CheckSession(ctx context.Context, env provider.Env) (provider.SessionInfo, error) {
-	props, err := p.loadCheckout(ctx, env)
+	props, _, err := p.ensureSession(ctx, env)
 	if err != nil {
 		return provider.SessionInfo{}, err
 	}
-	if props.IsGuest {
-		return provider.SessionInfo{}, provider.ErrSessionExpired
-	}
 	info := provider.SessionInfo{Balance: &domain.Money{Cents: props.BalanceCents, Currency: "CNY"}}
 	if props.Auth.User != nil {
-		info.Identity = firstNonEmpty(props.Auth.User.Email, props.Auth.User.Name)
+		info.Identity = cmp.Or(props.Auth.User.Email, props.Auth.User.Name)
 	}
 	return info, nil
 }
@@ -566,26 +506,20 @@ func buildItem(product rawProduct, spec domain.OrderSpec) (cartItem, error) {
 		}
 		specs[key] = value
 	}
-	return cartItem{ID: randomID(), ProductID: productID, Period: string(spec.Cycle), Qty: qty, Specs: specs, OS: spec.OS, Hostname: spec.Hostname, SSHKey: spec.SSHKey}, nil
+	return cartItem{ID: strings.ToLower(rand.Text()[:12]), ProductID: productID, Period: string(spec.Cycle), Qty: qty, Specs: specs, OS: spec.OS, Hostname: spec.Hostname, SSHKey: spec.SSHKey}, nil
 }
 
-func randomID() string {
-	buf := make([]byte, 6)
-	_, _ = rand.Read(buf)
-	return hex.EncodeToString(buf)
-}
-
-// postJSON 发 axios 风格 JSON 请求（带 X-XSRF-TOKEN）。
-func (p *Provider) postJSON(ctx context.Context, env provider.Env, path string, payload any, inertia bool) (*fetch.Response, error) {
+// postJSON 发 axios 风格 JSON 请求（带 X-XSRF-TOKEN）；version 非空时按 Inertia 提交（跟随重定向后拿到页面对象）。
+func (p *Provider) postJSON(ctx context.Context, env provider.Env, path string, payload any, version string) (*fetch.Response, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 	header := http.Header{"X-Requested-With": {"XMLHttpRequest"}, "Accept": {"application/json"}}
-	if inertia {
-		header = p.inertiaHeader(env.Session)
+	if version != "" {
+		header.Set("Accept", "text/html, application/xhtml+xml")
 		header.Set("X-Inertia", "true")
-		header.Set("X-Inertia-Version", p.getVersion())
+		header.Set("X-Inertia-Version", version)
 	}
 	if token := xsrfToken(env.Session); token != "" {
 		header.Set("X-XSRF-TOKEN", token)
@@ -602,15 +536,15 @@ func (p *Provider) postJSON(ctx context.Context, env provider.Env, path string, 
 }
 
 type couponPreview struct {
-	Code          string              `json:"code"`
-	DiscountCents int64               `json:"discount_cents"`
-	Message       string              `json:"message"`
-	Errors        map[string][]string `json:"errors"`
+	Code          string         `json:"code"`
+	DiscountCents int64          `json:"discount_cents"`
+	Message       string         `json:"message"`
+	Errors        map[string]any `json:"errors"`
 }
 
 // Quote 校验优惠码并计算应付金额。
 func (p *Provider) Quote(ctx context.Context, env provider.Env, spec domain.OrderSpec) (domain.Quote, error) {
-	props, err := p.ensureSession(ctx, env)
+	props, _, err := p.ensureSession(ctx, env)
 	if err != nil {
 		return domain.Quote{}, err
 	}
@@ -631,14 +565,14 @@ func (p *Provider) quote(ctx context.Context, env provider.Env, product rawProdu
 	if spec.Coupon == "" {
 		return quote, nil
 	}
-	resp, err := p.postJSON(ctx, env, "/orders/coupon/preview", map[string]any{"coupon_code": spec.Coupon, "product_id": item.ProductID, "period": item.Period, "qty": item.Qty, "specs": item.Specs}, false)
+	resp, err := p.postJSON(ctx, env, "/orders/coupon/preview", map[string]any{"coupon_code": spec.Coupon, "product_id": item.ProductID, "period": item.Period, "qty": item.Qty, "specs": item.Specs}, "")
 	if err != nil {
 		return domain.Quote{}, err
 	}
 	var preview couponPreview
 	_ = json.Unmarshal(resp.Body, &preview)
 	if resp.StatusCode >= http.StatusBadRequest {
-		quote.Message = firstNonEmpty(preview.Message, firstError(preview.Errors), fmt.Sprintf("coupon rejected (http %d)", resp.StatusCode))
+		quote.Message = cmp.Or(preview.Message, first(laravelErrors(preview.Errors)), fmt.Sprintf("coupon rejected (http %d)", resp.StatusCode))
 		return quote, nil
 	}
 	quote.CouponValid = true
@@ -647,18 +581,11 @@ func (p *Provider) quote(ctx context.Context, env provider.Env, product rawProdu
 	return quote, nil
 }
 
-func firstError(errs map[string][]string) string {
-	for _, messages := range errs {
-		if len(messages) > 0 {
-			return messages[0]
-		}
-	}
-	return ""
-}
+// cycleMonths 各周期月数，用于把配置项月增量折算到周期。
+var cycleMonths = map[domain.BillingCycle]int64{domain.CycleMonthly: 1, domain.CycleQuarterly: 3, domain.CycleSemiannually: 6, domain.CycleAnnually: 12, domain.CycleBiennially: 24, domain.CycleTriennially: 36}
 
 // subtotalCents 本地估算：周期价 + 配置项月增量 × 周期月数，乘数量。仅用于展示与价格上限判断。
 func subtotalCents(product rawProduct, spec domain.OrderSpec, qty int) int64 {
-	months := map[string]int64{"monthly": 1, "quarterly": 3, "semiannually": 6, "annually": 12, "biennially": 24, "triennially": 36}
 	var base int64
 	for _, cycle := range product.BillingCycles {
 		if cycle.Period == string(spec.Cycle) {
@@ -668,7 +595,7 @@ func subtotalCents(product rawProduct, spec domain.OrderSpec, qty int) int64 {
 	for key, value := range spec.Options {
 		for _, choice := range product.ConfigOptions[key] {
 			if asString(choice.Value) == value {
-				base += choice.DeltaCents * months[string(spec.Cycle)]
+				base += choice.DeltaCents * cycleMonths[spec.Cycle]
 			}
 		}
 	}
@@ -684,23 +611,21 @@ func findProduct(props *checkoutProps, productID string) (rawProduct, error) {
 	return rawProduct{}, fmt.Errorf("product %s not found", productID)
 }
 
-// ensureSession 拉取页面（刷新 XSRF Cookie 与 Inertia 版本）并确认已登录。
-func (p *Provider) ensureSession(ctx context.Context, env provider.Env) (*checkoutProps, error) {
-	props, err := p.loadCheckout(ctx, env)
+// ensureSession 拉取下单页（刷新 XSRF Cookie）并确认已登录，返回页面数据与 Inertia 版本。
+func (p *Provider) ensureSession(ctx context.Context, env provider.Env) (*checkoutProps, string, error) {
+	props, version, err := p.loadCheckout(ctx, env)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if props.IsGuest {
-		return nil, provider.ErrSessionExpired
+		return nil, "", provider.ErrSessionExpired
 	}
-	return props, nil
+	return props, version, nil
 }
-
-var invoicePathPattern = regexp.MustCompile(`/invoices/(\d+)`)
 
 // PlaceOrder 锁单：提交购物车结算，成功后站点跳转到账单页（未支付）。
 func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain.OrderSpec) (domain.OrderResult, error) {
-	props, err := p.ensureSession(ctx, env)
+	props, version, err := p.ensureSession(ctx, env)
 	if err != nil {
 		return domain.OrderResult{}, err
 	}
@@ -738,42 +663,56 @@ func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain
 		"purchase_terms_ack": true,
 	}
 	if props.TurnstileSiteKey != "" {
-		if env.Solver == nil {
-			return domain.OrderResult{}, errors.New("checkout requires turnstile but no solver configured")
-		}
-		solution, err := env.Solver.Solve(ctx, solver.Challenge{Kind: solver.KindTurnstile, SiteKey: props.TurnstileSiteKey, PageURL: p.baseURL + "/cart", SiteID: env.Site.ID, AccountID: accountID(env), Purpose: fmt.Sprintf("%s 锁单 %s", env.Site.Name, product.Slug)})
+		solution, err := env.Solve(ctx, solver.Challenge{Kind: solver.KindTurnstile, SiteKey: props.TurnstileSiteKey, PageURL: p.baseURL + "/cart", Purpose: fmt.Sprintf("%s 锁单 %s", env.Site.Name, product.Slug)})
 		if err != nil {
-			return domain.OrderResult{}, fmt.Errorf("solve turnstile: %w", err)
+			return domain.OrderResult{}, err
 		}
 		payload["cf_turnstile_response"] = solution.Token
 	}
-	resp, err := p.postJSON(ctx, env, "/cart/checkout", payload, true)
+	resp, err := p.postJSON(ctx, env, "/cart/checkout", payload, version)
 	if err != nil {
 		return domain.OrderResult{}, err
 	}
 	return parseCheckoutResult(resp, p.baseURL, quote)
 }
 
-func accountID(env provider.Env) string {
-	if env.Account == nil {
-		return ""
+var invoicePathPattern = regexp.MustCompile(`^/invoices/(\d+)/?$`)
+
+// checkoutLocation 判断 X-Inertia-Location（Inertia::location 外跳，状态 409）：本站 /invoices/{id} 为账单页，
+// 其它主机为外部支付页；本站其它地址（版本不符时指回原页面、会话失效跳 /login 等）都不算下单成功。
+func checkoutLocation(location, baseURL string) (invoiceID string, payURL string, ok bool) {
+	target, err := url.Parse(location)
+	if err != nil {
+		return "", "", false
 	}
-	return env.Account.ID
+	base, _ := url.Parse(baseURL)
+	resolved := base.ResolveReference(target)
+	if resolved.Host != base.Host {
+		return "", resolved.String(), resolved.Scheme == "https" || resolved.Scheme == "http"
+	}
+	if match := invoicePathPattern.FindStringSubmatch(resolved.Path); match != nil {
+		return match[1], resolved.String(), true
+	}
+	return "", "", false
 }
 
 // parseCheckoutResult Inertia 提交后跟随重定向：落在 /invoices/{id} 为成功；回到购物车并带 errors 为失败。
 func parseCheckoutResult(resp *fetch.Response, baseURL string, quote domain.Quote) (domain.OrderResult, error) {
 	result := domain.OrderResult{Total: quote.Total}
 	if location := resp.Header.Get("X-Inertia-Location"); location != "" {
-		if match := invoicePathPattern.FindStringSubmatch(location); match != nil {
-			result.InvoiceID = match[1]
-			result.PayURL = location
-			result.Message = "order placed, invoice unpaid"
+		invoiceID, payURL, ok := checkoutLocation(location, baseURL)
+		switch {
+		case ok && invoiceID != "":
+			result.InvoiceID, result.PayURL, result.Message = invoiceID, payURL, "order placed, invoice unpaid"
 			return result, nil
+		case ok:
+			result.PayURL, result.Message = payURL, "redirected to external payment page"
+			return result, nil
+		case resp.StatusCode == http.StatusConflict:
+			return result, fmt.Errorf("checkout: inertia version mismatch (http 409, location %s)", location)
+		default:
+			return result, fmt.Errorf("checkout: unexpected redirect to %s", location)
 		}
-		result.PayURL = location
-		result.Message = "redirected to external payment page"
-		return result, nil
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		return result, fmt.Errorf("checkout http %d", resp.StatusCode)
@@ -784,25 +723,20 @@ func parseCheckoutResult(resp *fetch.Response, baseURL string, quote domain.Quot
 	}
 	var props struct {
 		Errors map[string]any `json:"errors"`
-		Flash  map[string]any `json:"flash"`
 	}
 	_ = json.Unmarshal(data.Props, &props)
-	if len(props.Errors) > 0 {
-		var messages []string
-		for key, value := range props.Errors {
-			messages = append(messages, key+": "+asString(value))
-		}
+	if messages := laravelErrors(props.Errors); len(messages) > 0 {
 		message := strings.Join(messages, "; ")
 		if strings.Contains(strings.ToLower(message), "stock") || strings.Contains(message, "售罄") || strings.Contains(message, "库存") {
 			return result, fmt.Errorf("%w: %s", provider.ErrOutOfStock, message)
 		}
 		return result, fmt.Errorf("checkout rejected: %s", message)
 	}
-	if match := invoicePathPattern.FindStringSubmatch(data.URL + " " + resp.URL); match != nil {
-		result.InvoiceID = match[1]
-		result.PayURL = baseURL + "/invoices/" + match[1]
-		result.Message = "order placed, invoice unpaid"
-		return result, nil
+	for _, landed := range []string{data.URL, resp.URL} {
+		if invoiceID, payURL, ok := checkoutLocation(landed, baseURL); ok && invoiceID != "" {
+			result.InvoiceID, result.PayURL, result.Message = invoiceID, payURL, "order placed, invoice unpaid"
+			return result, nil
+		}
 	}
 	return result, fmt.Errorf("unrecognized checkout result: component=%s url=%s", data.Component, data.URL)
 }

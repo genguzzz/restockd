@@ -3,8 +3,10 @@
 package whmcs
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"html"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -42,9 +44,9 @@ func meta() provider.Meta {
 		MinInterval:     20 * time.Second,
 		DefaultInterval: 60 * time.Second,
 		DefaultFetch:    domain.FetchFlareSolverr,
-		Captcha:         []solver.Kind{solver.KindCloudflare, solver.KindRecaptchaV2, solver.KindTurnstile},
+		Captcha:         []solver.Kind{solver.KindRecaptchaV2, solver.KindTurnstile},
 		ConfigFields: []provider.Field{
-			{Key: configGroups, Label: "商品组", Type: provider.FieldList, Required: true, Placeholder: "cox-isp-vps", Help: "store/<组名> 中的组名或 cart.php?gid=<数字>，逗号分隔"},
+			{Key: configGroups, Label: "商品组", Type: provider.FieldList, Required: true, Placeholder: "cox-isp-vps", Help: "store/<组名> 中的组名或 cart.php?gid=<数字>，逗号或换行分隔"},
 			{Key: configCurrency, Label: "默认货币", Type: provider.FieldText, Default: "USD", Help: "价格只写 $ 时按此货币解析"},
 			{Key: configLocation, Label: "机房位置", Type: provider.FieldText, Help: "页面未标注时显示的位置"},
 		},
@@ -61,7 +63,7 @@ type Provider struct {
 
 // New 构造实例。
 func New(site domain.Site) (provider.Provider, error) {
-	groups := splitList(site.Config[configGroups])
+	groups := provider.SplitList(site.Config[configGroups])
 	if len(groups) == 0 {
 		return nil, fmt.Errorf("whmcs: config %q required", configGroups)
 	}
@@ -70,16 +72,6 @@ func New(site domain.Site) (provider.Provider, error) {
 		currency = "USD"
 	}
 	return &Provider{baseURL: strings.TrimRight(site.BaseURL, "/"), groups: groups, currency: currency, location: site.Config[configLocation]}, nil
-}
-
-func splitList(value string) []string {
-	var out []string
-	for _, item := range strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == '\n' || r == ' ' }) {
-		if item = strings.TrimSpace(item); item != "" {
-			out = append(out, item)
-		}
-	}
-	return out
 }
 
 // Meta 实现 provider.Provider。
@@ -168,11 +160,14 @@ func (p *Provider) parsePrices(node *goquery.Selection) []domain.Price {
 }
 
 var (
-	ramPattern       = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(MB|GB|G|M)\b.*\b(RAM|Memory|内存)`)
-	diskPattern      = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|TB|G|T)\b.*(Storage|Disk|SSD|NVMe|HDD|硬盘)`)
-	cpuPattern       = regexp.MustCompile(`(?i)(\d+)\s*x?\s*(vCPU|CPU|Cores?|核)`)
+	// 中文关键词前不能用 \b（RE2 的 \b 只认 ASCII 单词字符，"2 GB 内存" 会匹配失败）。
+	ramPattern       = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(MB|GB|G|M)\b.*(?:\bRAM|\bMemory|内存)`)
+	diskPattern      = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|TB|G|T)\b.*(?:Storage|Disk|SSD|NVMe|HDD|硬盘)`)
+	cpuPattern       = regexp.MustCompile(`(?i)(\d+)\s*x?\s*(?:vCPU|CPU|Cores?|核)`)
 	bandwidthPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(Mbps|Gbps)`)
-	trafficPattern   = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|TB)\b.*(Traffic|Transfer|流量)`)
+	trafficPattern   = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|TB)\b.*(?:Traffic|Transfer|流量)`)
+	ipv4Pattern      = regexp.MustCompile(`(?i)^(.*ipv4.*)$`)
+	unlimitedPattern = regexp.MustCompile(`(?i)^(.*(?:unlimited.*traffic|traffic.*unlimited).*)$`)
 	// 「标签：数值」写法（中文主题常见：内存：512MB、流量：1000GB、位置：日本 东京）。
 	ramLabelPattern      = regexp.MustCompile(`(?i)^(?:内存|RAM|Memory)\s*[：:]\s*(\d+(?:\.\d+)?)\s*(MB|GB|G|M)\b`)
 	trafficLabelPattern  = regexp.MustCompile(`(?i)^(?:流量|Traffic|Transfer|Bandwidth Quota)\s*[：:]\s*(\d+(?:\.\d+)?)\s*(GB|TB)\b`)
@@ -180,49 +175,86 @@ var (
 	ipLabelPattern       = regexp.MustCompile(`(?i)^IP\s*[：:]\s*(.+)$`)
 )
 
-// parseSpecs 从特性列表逐行识别规格；无法归类的行进入 Extra。
+// specRule 一个规格字段的识别规则：字段未设置时依次试 patterns，第一个命中的交给 set 写入。
+type specRule struct {
+	patterns []*regexp.Regexp
+	unset    func(specs *domain.Specs) bool
+	set      func(specs *domain.Specs, match []string)
+}
+
+var specRules = []specRule{
+	{
+		patterns: []*regexp.Regexp{locationLabelPattern},
+		unset:    func(s *domain.Specs) bool { return s.Location == "" },
+		set:      func(s *domain.Specs, m []string) { s.Location = strings.TrimSpace(m[1]) },
+	},
+	{
+		patterns: []*regexp.Regexp{ipLabelPattern, ipv4Pattern},
+		unset:    func(s *domain.Specs) bool { return s.IPType == "" },
+		set:      func(s *domain.Specs, m []string) { s.IPType = strings.TrimSpace(m[1]) },
+	},
+	{
+		patterns: []*regexp.Regexp{ramLabelPattern, ramPattern},
+		unset:    func(s *domain.Specs) bool { return s.RAMMB == 0 },
+		set:      func(s *domain.Specs, m []string) { s.RAMMB = sizeMB(m[1], m[2]) },
+	},
+	{
+		patterns: []*regexp.Regexp{trafficLabelPattern, trafficPattern},
+		unset:    func(s *domain.Specs) bool { return s.TrafficGB == 0 },
+		set:      func(s *domain.Specs, m []string) { s.TrafficGB = sizeGB(m[1], m[2]) },
+	},
+	{
+		patterns: []*regexp.Regexp{diskPattern},
+		unset:    func(s *domain.Specs) bool { return s.DiskGB == 0 },
+		set:      func(s *domain.Specs, m []string) { s.DiskGB = sizeGB(m[1], m[2]) },
+	},
+	{
+		patterns: []*regexp.Regexp{cpuPattern},
+		unset:    func(s *domain.Specs) bool { return s.CPU == "" },
+		set:      func(s *domain.Specs, m []string) { s.CPU = m[1] },
+	},
+	{
+		patterns: []*regexp.Regexp{bandwidthPattern},
+		unset:    func(s *domain.Specs) bool { return s.BandwidthMbps == 0 },
+		set: func(s *domain.Specs, m []string) {
+			value, _ := strconv.ParseFloat(m[1], 64)
+			if strings.EqualFold(m[2], "Gbps") {
+				value *= 1000
+			}
+			s.BandwidthMbps = int(value)
+		},
+	},
+	{
+		patterns: []*regexp.Regexp{unlimitedPattern},
+		unset:    func(s *domain.Specs) bool { return s.Extra["traffic"] == "" },
+		set:      func(s *domain.Specs, m []string) { s.Extra["traffic"] = m[1] },
+	},
+}
+
+// parseSpecs 从特性列表逐行识别规格：每行跑一遍所有未设置字段的规则（一行可含多项），都没命中的行进入 Extra。
 func parseSpecs(node *goquery.Selection) domain.Specs {
 	specs := domain.Specs{Extra: map[string]string{}}
 	content, _ := node.Find(".package-content, .product-desc, .package-body").First().Html()
 	extraIndex := 0
-	content = linePattern.ReplaceAllString(content, "\x00")
-	for _, line := range strings.Split(content, "\x00") {
+	for _, line := range linePattern.Split(content, -1) {
 		text := htmlutil.CleanText(stripTags(line))
 		if text == "" {
 			continue
 		}
-		switch {
-		case specs.Location == "" && locationLabelPattern.MatchString(text):
-			specs.Location = strings.TrimSpace(locationLabelPattern.FindStringSubmatch(text)[1])
-		case specs.IPType == "" && ipLabelPattern.MatchString(text):
-			specs.IPType = strings.TrimSpace(ipLabelPattern.FindStringSubmatch(text)[1])
-		case specs.RAMMB == 0 && ramLabelPattern.MatchString(text):
-			match := ramLabelPattern.FindStringSubmatch(text)
-			specs.RAMMB = sizeMB(match[1], match[2])
-		case specs.TrafficGB == 0 && trafficLabelPattern.MatchString(text):
-			match := trafficLabelPattern.FindStringSubmatch(text)
-			specs.TrafficGB = sizeGB([]string{text, match[1], match[2]})
-		case specs.TrafficGB == 0 && trafficPattern.MatchString(text):
-			specs.TrafficGB = sizeGB(trafficPattern.FindStringSubmatch(text))
-		case specs.RAMMB == 0 && ramPattern.MatchString(text):
-			match := ramPattern.FindStringSubmatch(text)
-			specs.RAMMB = sizeMB(match[1], match[2])
-		case specs.DiskGB == 0 && diskPattern.MatchString(text):
-			specs.DiskGB = sizeGB(diskPattern.FindStringSubmatch(text))
-		case specs.CPU == "" && cpuPattern.MatchString(text):
-			specs.CPU = cpuPattern.FindStringSubmatch(text)[1]
-		case specs.BandwidthMbps == 0 && bandwidthPattern.MatchString(text):
-			match := bandwidthPattern.FindStringSubmatch(text)
-			value, _ := strconv.ParseFloat(match[1], 64)
-			if strings.EqualFold(match[2], "Gbps") {
-				value *= 1000
+		matched := false
+		for _, rule := range specRules {
+			if !rule.unset(&specs) {
+				continue
 			}
-			specs.BandwidthMbps = int(value)
-		case specs.IPType == "" && strings.Contains(strings.ToLower(text), "ipv4"):
-			specs.IPType = text
-		case strings.Contains(strings.ToLower(text), "unlimited") && strings.Contains(strings.ToLower(text), "traffic"):
-			specs.Extra["traffic"] = text
-		default:
+			for _, pattern := range rule.patterns {
+				if match := pattern.FindStringSubmatch(text); match != nil {
+					rule.set(&specs, match)
+					matched = true
+					break
+				}
+			}
+		}
+		if !matched {
 			extraIndex++
 			specs.Extra["note"+strconv.Itoa(extraIndex)] = text
 		}
@@ -239,15 +271,7 @@ var (
 )
 
 func stripTags(fragment string) string {
-	return htmlUnescape(tagPattern.ReplaceAllString(fragment, " "))
-}
-
-func htmlUnescape(text string) string {
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader("<p>" + text + "</p>"))
-	if err != nil {
-		return text
-	}
-	return doc.Find("p").Text()
+	return html.UnescapeString(tagPattern.ReplaceAllString(fragment, " "))
 }
 
 func sizeMB(value, unit string) int {
@@ -258,42 +282,46 @@ func sizeMB(value, unit string) int {
 	return int(number)
 }
 
-func sizeGB(match []string) int {
-	number, _ := strconv.ParseFloat(match[1], 64)
-	if strings.HasPrefix(strings.ToUpper(match[2]), "T") {
+func sizeGB(value, unit string) int {
+	number, _ := strconv.ParseFloat(value, 64)
+	if strings.HasPrefix(strings.ToUpper(unit), "T") {
 		number *= 1000
 	}
 	return int(number)
 }
 
-var availablePattern = regexp.MustCompile(`(?i)(\d+)\s*(available|可用|剩余|in stock)`)
+var (
+	availablePattern = regexp.MustCompile(`(?i)(\d+)\s*(available|可用|剩余|in stock)`)
+	// outOfStockPattern 缺货文案：商品卡片、加购页与下单错误共用。
+	outOfStockPattern = regexp.MustCompile(`(?i)out of stock|currently unavailable|sold out|缺货|售罄|库存不足`)
+)
 
-// parseStock 库存判断顺序：数量文本 → 缺货文本 → 下单按钮可用性 → 补货提醒链接。
+// parseStock 库存判断顺序：数量文本 → 卡片上的缺货文案（徽标 / 按钮）→ 下单按钮可用性 → 补货提醒链接。
+// 缺货一律 Qty=0，便于前端与关注规则统一判断。
 func parseStock(node *goquery.Selection) domain.Stock {
+	zero := 0
 	qtyText := htmlutil.CleanText(node.Find(".package-qty, .qty, .product-qty").First().Text())
-	lower := strings.ToLower(qtyText)
 	if match := availablePattern.FindStringSubmatch(qtyText); match != nil {
 		qty, _ := strconv.Atoi(match[1])
 		if qty == 0 {
-			return domain.Stock{Status: domain.StockOut, Qty: &qty, Reason: qtyText}
+			return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: qtyText}
 		}
 		return domain.Stock{Status: domain.StockIn, Qty: &qty}
 	}
-	if strings.Contains(lower, "out of stock") || strings.Contains(qtyText, "缺货") || strings.Contains(qtyText, "售罄") {
-		zero := 0
-		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: qtyText}
+	if match := outOfStockPattern.FindString(htmlutil.CleanText(node.Text())); match != "" {
+		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: cmp.Or(qtyText, match)}
 	}
 	// 未开库存控制的商品没有数量标签，只能看下单按钮：standard_cart 的 id 为 product<N>-order-button，
 	// 友好 URL 主题链接是 /store/<组>/<商品> 而非 cart.php?a=add。
 	button := node.Find("[id$='-order-button'], a.btn-order-now, a[href*='a=add']").First()
 	if button.Length() > 0 {
 		if button.HasClass("disabled") || button.Is("[disabled]") {
-			return domain.Stock{Status: domain.StockOut, Reason: "order button disabled"}
+			return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: "order button disabled"}
 		}
 		return domain.Stock{Status: domain.StockIn}
 	}
 	if node.Find("a[href*='restock'], a[href*='notify']").Length() > 0 {
-		return domain.Stock{Status: domain.StockOut, Reason: "restock notifier"}
+		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: "restock notifier"}
 	}
 	return domain.Stock{Status: domain.StockUnknown}
 }

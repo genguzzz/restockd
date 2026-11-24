@@ -40,10 +40,26 @@ func TestParsePageHTMLAndJSONAgree(t *testing.T) {
 	}
 }
 
-func TestToCatalog(t *testing.T) {
+func loadStock(t *testing.T) *stockResponse {
+	t.Helper()
+	raw, err := os.ReadFile("../../../testdata/usvps24/stock.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stock stockResponse
+	if err := json.Unmarshal(raw, &stock); err != nil {
+		t.Fatal(err)
+	}
+	return &stock
+}
+
+// 有下单页缓存时，库存接口的商品补全周期价、配置项、优惠标记、数字 ID，目录带上支付方式与促销。
+func TestStockCatalogEnrichedFromCachedOrderPage(t *testing.T) {
 	_, props := loadProps(t, "../../../testdata/usvps24/orders_create.json")
 	instance, _ := New(domain.Site{ID: "usvps24", BaseURL: "https://usvps24.com"})
-	catalog := instance.(*Provider).toCatalog(props)
+	p := instance.(*Provider)
+	p.props = props
+	catalog := p.stockCatalog(loadStock(t))
 	if catalog.Promo == nil || catalog.Promo.Code != "bf2026" || catalog.Promo.Percent != 20 {
 		t.Fatalf("unexpected promo %+v", catalog.Promo)
 	}
@@ -54,45 +70,45 @@ func TestToCatalog(t *testing.T) {
 	for _, product := range catalog.Products {
 		byID[product.ID] = product
 	}
-	pinnacle := byID["21"]
-	if pinnacle.Stock.Status != domain.StockIn || pinnacle.Stock.Qty == nil || *pinnacle.Stock.Qty != 12 {
-		t.Fatalf("want in stock qty 12, got %+v", pinnacle.Stock)
-	}
+	pinnacle := byID["pinnacle-network-2"]
 	monthly, ok := pinnacle.PriceFor(domain.CycleMonthly)
 	if !ok || monthly.Amount != (domain.Money{Cents: 18800, Currency: "CNY"}) || monthly.RefID != "77" {
 		t.Fatalf("unexpected monthly price %+v", monthly)
 	}
-	if pinnacle.Specs.RAMMB != 2048 || pinnacle.Specs.CPU != "2" || pinnacle.Specs.Location != "美国加州 莱克福里斯特 (Lake Forest)" || pinnacle.Specs.Extra["region"] != "US-OC-LAKEFOREST" || pinnacle.Specs.Extra["slug"] != "pinnacle-network-2" {
-		t.Fatalf("unexpected specs %+v", pinnacle.Specs)
+	if len(pinnacle.Prices) < 2 || pinnacle.Specs.Extra["product_id"] != "21" || pinnacle.Specs.Extra["slug"] != "pinnacle-network-2" {
+		t.Fatalf("cycles / ids not enriched: %+v", pinnacle)
 	}
 	if len(pinnacle.Options) != 2 || pinnacle.Options[0].Key != "bandwidth_mbps" || pinnacle.Options[0].Choices[1].DeltaMonthly.Cents != 8800 {
 		t.Fatalf("unexpected options %+v", pinnacle.Options)
 	}
-	if byID["10"].Stock.Status != domain.StockOut || byID["10"].Stock.Reason != "sold_out" {
-		t.Fatalf("want sold out, got %+v", byID["10"].Stock)
+	if pinnacle.Stock.Status != domain.StockIn || *pinnacle.Stock.Qty != 12 {
+		t.Fatalf("stock must come from the stock api: %+v", pinnacle.Stock)
 	}
-	if byID["52"].Stock.Status != domain.StockClosed {
-		t.Fatalf("want closed, got %+v", byID["52"].Stock)
-	}
-	if !byID["32"].NoDiscount {
+	if !byID["pro-gw-mini-pool"].NoDiscount {
 		t.Fatal("no_discount flag lost")
 	}
 }
 
 func TestEmptyNameFallsBackToSlug(t *testing.T) {
 	instance, _ := New(domain.Site{ID: "usvps24"})
-	product := instance.(*Provider).toProduct(rawProduct{ID: 21, Slug: "pinnacle-network-2", Name: "  "}, time.Now())
-	if product.Name != "pinnacle-network-2" {
-		t.Fatalf("want slug fallback, got %q", product.Name)
+	product := instance.(*Provider).planProduct(stockPlan{Slug: "pinnacle-network-2", Name: "  "}, time.Now())
+	if product.Name != "pinnacle-network-2" || product.URL != "https://usvps24.com/plans/pinnacle-network-2" {
+		t.Fatalf("want slug fallback, got %q %q", product.Name, product.URL)
 	}
 }
 
 func TestCatalogFilter(t *testing.T) {
-	_, props := loadProps(t, "../../../testdata/usvps24/orders_create.json")
-	instance, _ := New(domain.Site{ID: "usvps24", Config: map[string]string{"products": "pinnacle-network-2, 13"}})
-	catalog := instance.(*Provider).toCatalog(props)
+	instance, _ := New(domain.Site{ID: "usvps24", Config: map[string]string{"products": "pinnacle-network-2,\nhome-pool"}})
+	catalog := instance.(*Provider).stockCatalog(loadStock(t))
 	if len(catalog.Products) != 2 {
 		t.Fatalf("want 2 filtered products, got %d", len(catalog.Products))
+	}
+}
+
+func TestLaravelErrors(t *testing.T) {
+	got := laravelErrors(map[string]any{"z": "last", "a": []any{"first", ""}, "m": ""})
+	if len(got) != 2 || got[0] != "first" || got[1] != "last" || first(nil) != "" {
+		t.Fatalf("want sorted non-empty messages, got %v", got)
 	}
 }
 
@@ -109,16 +125,8 @@ func TestSubtotalCents(t *testing.T) {
 }
 
 func TestStockCatalogMapping(t *testing.T) {
-	raw, err := os.ReadFile("../../../testdata/usvps24/stock.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var stock stockResponse
-	if err := json.Unmarshal(raw, &stock); err != nil {
-		t.Fatal(err)
-	}
 	instance, _ := New(domain.Site{ID: "usvps24", BaseURL: "https://usvps24.com"})
-	catalog := instance.(*Provider).stockCatalog(&stock)
+	catalog := instance.(*Provider).stockCatalog(loadStock(t))
 	byID := map[string]domain.Product{}
 	for _, product := range catalog.Products {
 		byID[product.ID] = product
