@@ -26,8 +26,8 @@ import {
   type SelectOption,
 } from 'naive-ui'
 import { AddOutline, RefreshOutline } from '@vicons/ionicons5'
-import { accountsApi, providersApi, sitesApi } from '@/api'
-import type { Account, FetchMode, ProviderMeta, Site, SiteInput } from '@/api/types'
+import { accountsApi, providersApi, settingsApi, sitesApi } from '@/api'
+import type { Account, EgressProxy, FetchMode, ProviderMeta, Site, SiteInput } from '@/api/types'
 import { useAction, useAsync } from '@/composables/useAsync'
 import { onLive } from '@/composables/useLive'
 import PageHeader from '@/components/PageHeader.vue'
@@ -36,6 +36,12 @@ import SchemaForm from '@/components/SchemaForm.vue'
 import TimeAgo from '@/components/TimeAgo.vue'
 
 const DEFAULT_INTERVAL_SEC = 60
+// 刷新间隔快捷设置（秒）
+const QUICK_INTERVALS = [
+  { sec: 60, label: '1 分钟' },
+  { sec: 180, label: '3 分钟' },
+]
+const DIRECT = 'direct'
 
 const fetchModeLabels: Record<FetchMode, string> = { direct: '直连', flaresolverr: 'FlareSolverr' }
 const capabilityLabels: Record<keyof ProviderMeta['capabilities'], string> = {
@@ -53,14 +59,24 @@ const sites = ref<Site[]>([])
 const providers = ref<ProviderMeta[]>([])
 const polling = ref<string | null>(null)
 const toggling = ref<string | null>(null)
+const settingInterval = ref<string | null>(null)
+const proxies = ref<EgressProxy[]>([])
 const providerOf = (kind: string): ProviderMeta | undefined => providers.value.find((item) => item.kind === kind)
 
 const { loading, run } = useAsync(async () => {
-  const [siteList, providerList] = await Promise.all([sitesApi.list(), providersApi.list()])
+  const [siteList, providerList, settings] = await Promise.all([sitesApi.list(), providersApi.list(), settingsApi.get()])
   sites.value = siteList
   providers.value = providerList
+  proxies.value = settings.egress?.proxies ?? []
   return siteList
 })
+
+const egressName = (id: string): string => (id === DIRECT ? '直连' : (proxies.value.find((proxy) => proxy.id === id)?.name || id))
+const egressOptions = computed<SelectOption[]>(() => [
+  { label: '直连（本服务器出口）', value: DIRECT },
+  ...proxies.value.map((proxy) => ({ label: proxy.name || proxy.id, value: proxy.id, disabled: !proxy.enabled })),
+])
+const intervalText = (sec: number): string => (sec % 60 === 0 ? `每 ${sec / 60} 分钟` : `每 ${sec} 秒`)
 
 const upsertSite = (site: Site) => {
   const index = sites.value.findIndex((item) => item.id === site.id)
@@ -83,7 +99,7 @@ const toInput = (site: Site): SiteInput => ({
   config: { ...site.config },
   interval_sec: site.interval_sec,
   fetch_mode: site.fetch_mode,
-  proxy: site.proxy ?? '',
+  egress: [...(site.egress ?? [])],
   monitor_account_id: site.monitor_account_id ?? '',
   enabled: site.enabled,
 })
@@ -92,6 +108,15 @@ const toggleEnabled = async (site: Site, enabled: boolean) => {
   toggling.value = site.id
   const saved = await act(() => sitesApi.update(site.id, { ...toInput(site), enabled }), enabled ? '已启用' : '已停用')
   toggling.value = null
+  if (saved) upsertSite(saved)
+}
+
+// 卡片上的快捷间隔：点击即保存
+const setIntervalQuick = async (site: Site, sec: number) => {
+  if (site.interval_sec === sec) return
+  settingInterval.value = site.id
+  const saved = await act(() => sitesApi.update(site.id, { ...toInput(site), interval_sec: sec }), `已改为${intervalText(sec)}`)
+  settingInterval.value = null
   if (saved) upsertSite(saved)
 }
 
@@ -115,7 +140,7 @@ const form = ref<SiteInput>(emptyInput())
 const siteAccounts = ref<Account[]>([])
 
 function emptyInput(): SiteInput {
-  return { kind: '', name: '', base_url: '', config: {}, interval_sec: DEFAULT_INTERVAL_SEC, fetch_mode: 'direct', proxy: '', monitor_account_id: '', enabled: true }
+  return { kind: '', name: '', base_url: '', config: {}, interval_sec: DEFAULT_INTERVAL_SEC, fetch_mode: 'direct', egress: [], monitor_account_id: '', enabled: true }
 }
 
 const selectedProvider = computed<ProviderMeta | undefined>(() => providerOf(form.value.kind))
@@ -225,8 +250,20 @@ onMounted(() => {
               <n-tag size="small" :type="site.fetch_mode === 'flaresolverr' ? 'info' : 'default'" :bordered="false">
                 {{ fetchModeLabels[site.fetch_mode] ?? site.fetch_mode }}
               </n-tag>
-              <n-text depth="3">每 {{ site.interval_sec }} 秒</n-text>
+              <n-text depth="3">{{ intervalText(site.interval_sec) }}</n-text>
+              <n-button
+                v-for="quick in QUICK_INTERVALS"
+                :key="quick.sec"
+                size="tiny"
+                :type="site.interval_sec === quick.sec ? 'primary' : 'default'"
+                :secondary="site.interval_sec !== quick.sec"
+                :disabled="(providerOf(site.kind)?.min_interval_sec ?? 0) > quick.sec || settingInterval === site.id"
+                @click="setIntervalQuick(site, quick.sec)"
+              >
+                {{ quick.label }}
+              </n-button>
             </n-space>
+            <n-text v-if="site.egress?.length" depth="3" class="egress">出口：{{ site.egress.map(egressName).join(' → ') }}</n-text>
             <div class="stats">
               <span><n-text depth="3">商品 </n-text>{{ site.product_count }}</span>
               <span><n-text depth="3">有货 </n-text><n-text :type="site.in_stock_count > 0 ? 'success' : 'default'" strong>{{ site.in_stock_count }}</n-text></span>
@@ -284,6 +321,18 @@ onMounted(() => {
             >
               <template #suffix>秒</template>
             </n-input-number>
+            <n-space :size="6" style="margin-left: 8px; flex-shrink: 0">
+              <n-button
+                v-for="quick in QUICK_INTERVALS"
+                :key="quick.sec"
+                size="small"
+                :type="form.interval_sec === quick.sec ? 'primary' : 'default'"
+                :disabled="minInterval > quick.sec"
+                @click="form.interval_sec = quick.sec"
+              >
+                {{ quick.label }}
+              </n-button>
+            </n-space>
           </n-form-item>
           <n-form-item label="抓取方式">
             <n-radio-group v-model:value="form.fetch_mode">
@@ -293,8 +342,8 @@ onMounted(() => {
               </n-space>
             </n-radio-group>
           </n-form-item>
-          <n-form-item label="出口代理（可选）" feedback="本服务器 IP 被站点限流 / 封禁时换线，如 socks5://127.0.0.1:1080；对轮询与下单都生效">
-            <n-input v-model:value="form.proxy" placeholder="留空走默认出口" />
+          <n-form-item label="出口优先级" feedback="按选择顺序排优先级，连接失败或被限流时自动换下一条；留空用「设置 → 出口线路」的默认优先级">
+            <n-select v-model:value="form.egress" multiple :options="egressOptions" placeholder="使用默认出口" />
           </n-form-item>
           <n-form-item
             label="监控账号"
@@ -335,6 +384,9 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.egress {
+  font-size: 12px;
 }
 .link {
   word-break: break-all;

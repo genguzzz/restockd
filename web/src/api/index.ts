@@ -17,6 +17,7 @@ import type {
   StockStatus,
   Watch,
   WatchInput,
+  EgressTestResult,
 } from './types'
 
 type Ok = { ok: boolean }
@@ -86,6 +87,10 @@ export const challengesApi = {
   solve: (id: string, input: ChallengeSolveInput) =>
     http.post<Ok>(`/api/challenges/${encodeURIComponent(id)}/solve`, input),
   cancel: (id: string) => http.post<Ok>(`/api/challenges/${encodeURIComponent(id)}/cancel`),
+}
+
+export const egressApi = {
+  test: (id: string) => http.post<EgressTestResult>(`/api/egress/${encodeURIComponent(id)}/test`),
 }
 
 export const settingsApi = {

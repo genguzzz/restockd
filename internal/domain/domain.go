@@ -138,7 +138,9 @@ type Site struct {
 	Config      map[string]string `json:"config"`
 	IntervalSec int               `json:"interval_sec"`
 	FetchMode   FetchMode         `json:"fetch_mode"`
-	// Proxy 站点专用出口（http:// / socks5://），留空走服务默认出口；用于出口 IP 被站点限制时换线。
+	// Egress 出口优先级（egress 登记的出口 ID，"direct" 为直连）；空表示用全局默认。出错按顺序回退。
+	Egress []string `json:"egress,omitempty"`
+	// Proxy 已废弃（单一代理），启动时迁移为 Egress。
 	Proxy           string    `json:"proxy,omitempty"`
 	MonitorAccount  string    `json:"monitor_account_id,omitempty"`
 	Enabled         bool      `json:"enabled"`

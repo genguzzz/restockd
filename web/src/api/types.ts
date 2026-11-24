@@ -67,8 +67,8 @@ export interface Site {
   config: Record<string, string>
   interval_sec: number
   fetch_mode: FetchMode
-  /** 站点专用出口代理（http:// 或 socks5://），留空走默认出口 */
-  proxy?: string
+  /** 出口优先级（出口 ID，'direct' 为直连），空表示用全局默认；出错按顺序回退 */
+  egress?: string[]
   monitor_account_id?: string
   enabled: boolean
   last_poll_at?: string
@@ -81,7 +81,7 @@ export interface Site {
 
 export type SiteInput = Pick<
   Site,
-  'kind' | 'name' | 'base_url' | 'config' | 'interval_sec' | 'fetch_mode' | 'proxy' | 'monitor_account_id' | 'enabled'
+  'kind' | 'name' | 'base_url' | 'config' | 'interval_sec' | 'fetch_mode' | 'egress' | 'monitor_account_id' | 'enabled'
 > & { id?: string }
 
 export interface Choice {
@@ -297,7 +297,26 @@ export interface Settings {
   solver: { flaresolverr_url: string; external_url: string; external_token: string; manual_timeout_sec: number }
   /** 无关注站点的降频：无人访问 idle、有人访问 viewer（秒，0 为默认 3600 / 300） */
   polling: { idle_interval_sec: number; viewer_interval_sec: number }
+  /** 出口线路：登记的代理 + 未单独指定出口的站点使用的默认优先级 */
+  egress: { proxies: EgressProxy[]; default: string[] }
   notify_events: EventType[]
+}
+
+export interface EgressProxy {
+  id: string
+  name: string
+  /** http://user:pass@host:port 或 socks5://host:port；读取时密码为 ****** */
+  url: string
+  enabled: boolean
+}
+
+export interface EgressTestResult {
+  ok: boolean
+  ip?: string
+  loc?: string
+  colo?: string
+  ms?: number
+  error?: string
 }
 
 export interface Stats {

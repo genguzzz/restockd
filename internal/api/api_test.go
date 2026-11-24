@@ -204,3 +204,16 @@ func TestSPAFallback(t *testing.T) {
 		t.Fatalf("unknown api should 404 not SPA, got %d", resp.StatusCode)
 	}
 }
+
+func TestMaskProxyURL(t *testing.T) {
+	cases := map[string]string{
+		"socks5://u:secret@127.0.0.1:1080": "socks5://u:******@127.0.0.1:1080",
+		"http://127.0.0.1:10809":           "http://127.0.0.1:10809",
+		"http://user@host:8080":            "http://user@host:8080",
+	}
+	for in, want := range cases {
+		if got := maskProxyURL(in); got != want {
+			t.Errorf("maskProxyURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

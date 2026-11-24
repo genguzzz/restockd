@@ -19,6 +19,7 @@ internal/provider       Provider 接口与注册表
   ├─ usvps24            usvps24.com（Laravel + Inertia），公开 JSON 监控，/cart/checkout 锁单
   └─ htmlutil           表单序列化、金额 / 周期解析、验证码探测
 internal/fetch          抓取抽象：直连 / FlareSolverr / Hybrid（先直连，遇质询回落），Cookie 解析
+internal/egress         出口层：直连与代理统一为「出口」，按优先级使用，连接失败 / 限流时回退并冷却（Pool 接口，可接代理池）
 internal/solver         验证码 Solver 接口：Chain、External、FlareSolverr、ManualBroker
 internal/engine         每站点调度协程、快照 diff、关注匹配、锁单执行、通知、事件总线
 internal/notify         Telegram / SMTP / Bark，Hub 按事件类型过滤分发

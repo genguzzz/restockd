@@ -127,6 +127,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/settings", s.auth(s.handleGetSettings))
 	s.mux.HandleFunc("PUT /api/settings", s.auth(s.handlePutSettings))
 	s.mux.HandleFunc("POST /api/settings/test-notify", s.auth(s.handleTestNotify))
+	s.mux.HandleFunc("POST /api/egress/{id}/test", s.auth(s.handleTestEgress))
 	s.mux.HandleFunc("GET /api/stats", s.auth(s.handleStats))
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeError(w, http.StatusNotFound, "not found") })

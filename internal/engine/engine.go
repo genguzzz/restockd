@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/genguzzz/restockd/internal/domain"
+	"github.com/genguzzz/restockd/internal/egress"
 	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/notify"
 	"github.com/genguzzz/restockd/internal/provider"
@@ -36,6 +37,7 @@ type Settings struct {
 	Bark         notify.BarkConfig     `json:"bark"`
 	Solver       SolverSettings        `json:"solver"`
 	Polling      PollingSettings       `json:"polling"`
+	Egress       egress.Settings       `json:"egress"`
 	NotifyEvents []string              `json:"notify_events"`
 }
 
@@ -69,9 +71,9 @@ type Engine struct {
 	publicURL string
 
 	direct *fetch.DirectClient
-	// proxied 站点专用出口的客户端，按代理地址复用。
-	proxied     map[string]*fetch.DirectClient
-	httpTimeout time.Duration
+	// egress 出口登记表（直连 + 设置里的代理）与共享冷却状态。
+	egress       *egress.Registry
+	egressHealth *egress.Health
 
 	mu       sync.RWMutex
 	settings Settings
@@ -105,18 +107,18 @@ func New(options Options) (*Engine, error) {
 		logger = slog.Default()
 	}
 	engine := &Engine{
-		store:       options.Store,
-		log:         logger,
-		bus:         NewBus(),
-		hub:         notify.NewHub(),
-		broker:      solver.NewManualBroker(5 * time.Minute),
-		publicURL:   strings.TrimRight(options.PublicURL, "/"),
-		direct:      direct,
-		proxied:     map[string]*fetch.DirectClient{},
-		httpTimeout: timeout,
-		sites:       map[string]*siteRunner{},
-		sessions:    map[string]*fetch.Session{},
-		orderLock:   map[string]*sync.Mutex{},
+		store:        options.Store,
+		log:          logger,
+		bus:          NewBus(),
+		hub:          notify.NewHub(),
+		broker:       solver.NewManualBroker(5 * time.Minute),
+		publicURL:    strings.TrimRight(options.PublicURL, "/"),
+		direct:       direct,
+		egress:       egress.NewRegistry(direct, timeout),
+		egressHealth: egress.NewHealth(),
+		sites:        map[string]*siteRunner{},
+		sessions:     map[string]*fetch.Session{},
+		orderLock:    map[string]*sync.Mutex{},
 	}
 	engine.broker.OnNew = engine.onChallenge
 	engine.broker.OnDone = func(id string) { engine.bus.Publish("challenge_done", map[string]string{"id": id}) }
@@ -136,11 +138,14 @@ func (e *Engine) Start(ctx context.Context) error {
 	if err := e.store.GetSetting(ctx, SettingsKey, &settings); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("load settings: %w", err)
 	}
-	e.ApplySettings(settings)
 	sites, err := e.store.ListSites(ctx)
 	if err != nil {
 		return err
 	}
+	if sites, err = e.migrateSiteProxies(ctx, &settings, sites); err != nil {
+		return err
+	}
+	e.ApplySettings(settings)
 	for _, site := range sites {
 		if err := e.ReloadSite(site); err != nil {
 			e.log.Warn("site not started", "site", site.ID, "err", err)
@@ -185,6 +190,7 @@ func (e *Engine) Settings() Settings {
 
 // ApplySettings 热更新通知通道与 Solver 链：外部服务 → FlareSolverr → 人工兜底。
 func (e *Engine) ApplySettings(settings Settings) {
+	e.egress.Apply(settings.Egress)
 	e.hub.Apply(notify.Settings{Telegram: settings.Telegram, Email: settings.Email, Bark: settings.Bark, Events: settings.NotifyEvents})
 	timeout := time.Duration(settings.Solver.ManualTimeoutSec) * time.Second
 	if timeout <= 0 {
@@ -227,32 +233,65 @@ func (e *Engine) clientFor(site domain.Site) fetch.Client {
 	e.mu.RLock()
 	flare := e.flare
 	e.mu.RUnlock()
-	direct := e.directFor(site)
-	if site.FetchMode == domain.FetchFlareSolverr && flare != nil {
-		return &fetch.HybridClient{Primary: direct, Fallback: flare}
-	}
-	return direct
-}
-
-// directFor 站点设置了专用出口时返回对应客户端（按代理地址复用）；地址无效时记日志并回落默认出口。
-func (e *Engine) directFor(site domain.Site) *fetch.DirectClient {
-	proxy := strings.TrimSpace(site.Proxy)
-	if proxy == "" {
-		return e.direct
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if client, ok := e.proxied[proxy]; ok {
-		return client
-	}
-	client, err := fetch.NewDirectClient(e.httpTimeout, proxy)
+	var client fetch.Client
+	routes, err := e.egress.Routes(site.ID, site.Egress)
 	if err != nil {
-		e.log.Warn("invalid site proxy, using default egress", "site", site.ID, "err", err)
-		return e.direct
+		client = errClient{err: err}
+	} else {
+		client = &egress.Client{SiteID: site.ID, Routes: routes, Health: e.egressHealth, Log: e.log}
 	}
-	e.proxied[proxy] = client
+	if site.FetchMode == domain.FetchFlareSolverr && flare != nil {
+		return &fetch.HybridClient{Primary: client, Fallback: flare}
+	}
 	return client
 }
+
+// errClient 出口配置不可用时让每次请求都返回同一个错误（体现在站点 / 订单错误里）。
+type errClient struct{ err error }
+
+func (c errClient) Do(context.Context, *fetch.Session, *fetch.Request) (*fetch.Response, error) {
+	return nil, c.err
+}
+
+// migrateSiteProxies 把旧版站点单一 proxy 迁移为出口登记表中的代理 + 站点出口优先级。
+func (e *Engine) migrateSiteProxies(ctx context.Context, settings *Settings, sites []domain.Site) ([]domain.Site, error) {
+	changed := false
+	for i, site := range sites {
+		if site.Proxy == "" {
+			continue
+		}
+		id := "site-" + site.ID
+		exists := false
+		for _, proxy := range settings.Egress.Proxies {
+			if proxy.URL == site.Proxy {
+				id, exists = proxy.ID, true
+				break
+			}
+		}
+		if !exists {
+			settings.Egress.Proxies = append(settings.Egress.Proxies, egress.Proxy{ID: id, Name: site.Name + " 专用", URL: site.Proxy, Enabled: true})
+		}
+		if len(site.Egress) == 0 {
+			site.Egress = []string{id}
+		}
+		site.Proxy = ""
+		if err := e.store.SaveSite(ctx, site); err != nil {
+			return nil, err
+		}
+		sites[i] = site
+		changed = true
+		e.log.Info("migrated site proxy to egress", "site", site.ID, "egress", id)
+	}
+	if changed {
+		if err := e.store.PutSetting(ctx, SettingsKey, *settings); err != nil {
+			return nil, err
+		}
+	}
+	return sites, nil
+}
+
+// EgressRoute 单个出口（设置页测试连通性用）。
+func (e *Engine) EgressRoute(id string) (egress.Route, error) { return e.egress.Route(id) }
 
 func (e *Engine) currentSolver() solver.Solver {
 	e.mu.RLock()

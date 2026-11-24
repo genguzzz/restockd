@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/genguzzz/restockd/internal/domain"
+	"github.com/genguzzz/restockd/internal/egress"
 	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/notify"
 	"github.com/genguzzz/restockd/internal/provider"
@@ -289,20 +291,39 @@ func TestIDSchemeChanged(t *testing.T) {
 	}
 }
 
-func TestSiteProxyClientsAndRateLimitNotRetried(t *testing.T) {
+func TestEgressClientAndRateLimitNotRetried(t *testing.T) {
+	ctx := context.Background()
 	st, _ := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	defer st.Close()
 	engine, _ := New(Options{Store: st})
-	plain := engine.directFor(domain.Site{ID: "a"})
-	viaProxy := engine.directFor(domain.Site{ID: "b", Proxy: "socks5://127.0.0.1:10820"})
-	again := engine.directFor(domain.Site{ID: "c", Proxy: "socks5://127.0.0.1:10820"})
-	if plain == viaProxy || viaProxy != again {
-		t.Fatal("proxied sites need their own, shared-per-proxy client")
+	engine.ApplySettings(Settings{Egress: egress.Settings{Proxies: []egress.Proxy{{ID: "dmit", URL: "socks5://127.0.0.1:10820", Enabled: true}}}})
+	if _, ok := engine.clientFor(domain.Site{ID: "a"}).(*egress.Client); !ok {
+		t.Fatal("sites must go through the egress client")
 	}
-	if engine.directFor(domain.Site{ID: "d", Proxy: "://bad"}) != plain {
-		t.Fatal("invalid proxy must fall back to the default egress")
+	client := engine.clientFor(domain.Site{ID: "b", Egress: []string{"missing"}})
+	if _, err := client.Do(ctx, nil, &fetch.Request{URL: "https://x"}); !errors.Is(err, egress.ErrNoEgress) {
+		t.Fatalf("unusable explicit egress must surface an error, got %v", err)
 	}
 	if retryable(fmt.Errorf("load: %w", &fetch.RateLimitError{RetryAfter: time.Hour})) {
 		t.Fatal("rate limits must not be retried within an order")
+	}
+}
+
+func TestMigrateSiteProxy(t *testing.T) {
+	ctx := context.Background()
+	st, _ := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	defer st.Close()
+	if err := st.SaveSite(ctx, domain.Site{ID: "uv", Kind: "fakeauth", Name: "UV", BaseURL: "https://x", Proxy: "socks5://127.0.0.1:10820", Config: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	engine, _ := New(Options{Store: st})
+	if err := engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Stop()
+	site, _ := st.GetSite(ctx, "uv")
+	settings := engine.Settings()
+	if site.Proxy != "" || len(site.Egress) != 1 || len(settings.Egress.Proxies) != 1 || settings.Egress.Proxies[0].URL != "socks5://127.0.0.1:10820" || settings.Egress.Proxies[0].ID != site.Egress[0] {
+		t.Fatalf("proxy not migrated: site=%+v egress=%+v", site, settings.Egress)
 	}
 }

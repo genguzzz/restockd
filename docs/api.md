@@ -51,7 +51,7 @@
   "config": {"groups": "cox-isp-vps"},
   "interval_sec": 60,
   "fetch_mode": "flaresolverr",
-  "proxy": "",
+  "egress": ["dmit", "direct"],
   "monitor_account_id": "",
   "enabled": true,
   "last_poll_at": "2026-11-24T07:40:00Z",
@@ -63,7 +63,10 @@
 }
 ```
 新建 / 更新请求体为上述对象去掉只读字段（`last_*`、`next_poll_at`、`consecutive_fail`、`*_count`）。`id` 新建时可空（服务端生成）。
-`fetch_mode`：`direct` | `flaresolverr`。`proxy`：站点专用出口（`http://…` / `socks5://…`），本服务器 IP 被站点限流时换线，对轮询与下单都生效；留空走默认出口（FlareSolverr 请求不经过它）。
+`fetch_mode`：`direct` | `flaresolverr`。`egress`：出口优先级（设置里登记的出口 ID，`direct` 为内置直连），空数组表示使用 `settings.egress.default`。
+请求按顺序使用出口：连接失败（出口冷却 2 分钟，对所有站点）或站点 429（按站点 + 出口 + 路径第一段冷却到 Retry-After）时换下一个；
+非幂等请求只在连接未建立时换出口；所有出口都在冷却时直接返回限流错误、不发请求。站点显式指定的出口都不可用时报错，不会偷偷回落直连。
+FlareSolverr 请求不经过出口层。旧版 `proxy` 字段在启动时自动迁移为一个出口。
 
 ## Product（商品快照）
 
@@ -222,6 +225,7 @@
   "bark": {"enabled": true, "device_urls": "******", "group": "restockd", "sound": "", "icon": ""},
   "solver": {"flaresolverr_url": "http://127.0.0.1:8191", "external_url": "", "external_token": "******", "manual_timeout_sec": 300},
   "polling": {"idle_interval_sec": 3600, "viewer_interval_sec": 300},
+  "egress": {"proxies": [{"id": "dmit", "name": "dmit LA", "url": "socks5://127.0.0.1:10820", "enabled": true}], "default": ["dmit", "direct"]},
   "notify_events": ["restock", "order", "challenge"]
 }
 ```
@@ -230,6 +234,8 @@
   有关注的站点始终按站点 `interval_sec`。增删关注规则会立即重排。
 - `bark.device_urls`：Bark 设备地址 `https://<server>/<device key>`，逗号 / 换行分隔多台；属于密钥，读取时回传 `"******"`。
   补货 / 锁单 / 人工验证以 `timeSensitive` 级别推送，其余事件为 `active`。
+- `egress.proxies[].url` 中的密码读取时为 `******`，原样传回表示不修改；`id` 不能为 `direct`。
+- `POST /api/egress/{id}/test`（`id` 可为 `direct`）→ `{"ok":true,"ip":"…","loc":"US","colo":"LAX","ms":420}`，经该出口访问 Cloudflare trace。
 - `POST /api/settings/test-notify` → `{"ok":true,"results":{"telegram":"ok","email":"disabled","bark":"ok"}}`
 
 ## Stats（首页）

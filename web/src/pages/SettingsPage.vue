@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 设置页：通知渠道（Telegram / SMTP / Bark）、验证码求解、轮询策略与通知事件；密码类字段 "******" 表示已设置且不修改
+// 设置页：通知渠道（Telegram / SMTP / Bark）、验证码求解、出口线路、轮询策略与通知事件；密码类字段 "******" 表示已设置且不修改
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import {
@@ -12,14 +12,16 @@ import {
   NFormItem,
   NInput,
   NInputNumber,
+  NSelect,
   NSpace,
   NSpin,
   NSwitch,
   NTag,
   NText,
 } from 'naive-ui'
-import { settingsApi } from '@/api'
-import type { EventType, Settings } from '@/api/types'
+import { egressApi, settingsApi } from '@/api'
+import type { EgressProxy, EgressTestResult, EventType, Settings } from '@/api/types'
+import EgressRow from '@/components/EgressRow.vue'
 import { useAction, useAsync } from '@/composables/useAsync'
 import { eventLabels } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
@@ -28,6 +30,10 @@ const SECRET_MASK = '******'
 const SECRET_PLACEHOLDER = '已设置（留空不修改）'
 const notifyEventOrder: EventType[] = ['restock', 'order', 'challenge', 'account', 'price_change', 'new_product', 'sold_out', 'poll_error']
 const notifyOptions: { value: EventType; label: string }[] = notifyEventOrder.map((item) => ({ value: item, label: eventLabels[item] }))
+// 直连是内置出口（ID 为 direct），与登记的代理一样参与优先级排序与回退。
+const DIRECT_EGRESS: EgressProxy = { id: 'direct', name: '直连', url: '', enabled: true }
+// 模板里经 computed 引用（vue-tsc 会把本文件模板中的普通常量误当作 ref 检查）
+const directEgress = computed<EgressProxy>(() => DIRECT_EGRESS)
 
 // 密码类字段的表单值：已设置时输入框留空，提交时空值回传掩码
 interface SecretInputs {
@@ -54,6 +60,7 @@ function emptySettings(): Settings {
     bark: { enabled: false, device_urls: '', group: '', sound: '', icon: '' },
     solver: { flaresolverr_url: '', external_url: '', external_token: '', manual_timeout_sec: 300 },
     polling: { idle_interval_sec: 3600, viewer_interval_sec: 300 },
+    egress: { proxies: [], default: [] },
     notify_events: [],
   }
 }
@@ -73,6 +80,7 @@ const applySettings = (settings: Settings) => {
     externalToken: masked.value.externalToken ? '' : settings.solver.external_token,
   }
   form.value = JSON.parse(JSON.stringify(settings)) as Settings
+  form.value.egress = { proxies: settings.egress?.proxies ?? [], default: settings.egress?.default ?? [] }
   form.value.polling = {
     idle_interval_sec: settings.polling?.idle_interval_sec || 3600,
     viewer_interval_sec: settings.polling?.viewer_interval_sec || 300,
@@ -133,6 +141,34 @@ const resultType = (value: string): 'success' | 'default' | 'error' => {
 const channelLabels: Record<string, string> = { telegram: 'Telegram', email: '邮件', bark: 'Bark' }
 const channelLabel = (channel: string): string => channelLabels[channel] ?? channel
 const resultText = (value: string): string => (value === 'ok' ? '成功' : value === 'disabled' ? '未启用' : value)
+
+// ---------- 出口 ----------
+const egressOptions = computed(() => [
+  { label: '直连（本服务器出口）', value: DIRECT_EGRESS.id },
+  ...form.value.egress.proxies.filter((proxy) => proxy.id).map((proxy) => ({ label: proxy.name || proxy.id, value: proxy.id, disabled: !proxy.enabled })),
+])
+const egressTesting = ref<Record<string, boolean>>({})
+const egressResults = ref<Record<string, EgressTestResult>>({})
+
+const addEgress = () => {
+  const id = `p${Math.random().toString(16).slice(2, 8)}`
+  form.value.egress.proxies = [...form.value.egress.proxies, { id, name: '', url: '', enabled: true }]
+}
+const updateEgress = (value: EgressProxy) => {
+  form.value.egress.proxies = form.value.egress.proxies.map((proxy) => (proxy.id === value.id ? value : proxy))
+}
+const removeEgress = (id: string) => {
+  form.value.egress.proxies = form.value.egress.proxies.filter((proxy) => proxy.id !== id)
+  form.value.egress.default = form.value.egress.default.filter((item) => item !== id)
+}
+// 测试前先保存，保证服务端用的是当前填写的地址
+const testEgress = async (id: string) => {
+  if (dirty.value && !(await save())) return
+  egressTesting.value = { ...egressTesting.value, [id]: true }
+  const result = await act(() => egressApi.test(id))
+  egressTesting.value = { ...egressTesting.value, [id]: false }
+  egressResults.value = { ...egressResults.value, [id]: result ?? { ok: false, error: '请求失败' } }
+}
 
 const notifyEvents = computed<string[]>({
   get: () => form.value.notify_events,
@@ -295,6 +331,40 @@ onMounted(() => {
           </n-form>
         </n-card>
 
+        <n-card title="出口" size="small">
+          <n-alert type="default" :show-icon="false" class="contract">
+            站点按优先级使用出口（直连也是一个出口）：连接失败或被站点限流（429）时自动换下一个，并暂时冷却出问题的出口
+            （限流只对被限的页面生效）。下单等非幂等请求只在连接未建立时换出口，避免重复提交。站点可在「站点 → 出口优先级」单独指定。
+          </n-alert>
+          <div class="proxies">
+            <EgressRow
+              :egress="directEgress"
+              builtin
+              :testing="egressTesting[directEgress.id]"
+              :result="egressResults[directEgress.id]"
+              @test="testEgress(directEgress.id)"
+            />
+            <EgressRow
+              v-for="item in form.egress.proxies"
+              :key="item.id"
+              :egress="item"
+              :testing="egressTesting[item.id]"
+              :result="egressResults[item.id]"
+              @update="updateEgress"
+              @test="testEgress(item.id)"
+              @remove="removeEgress(item.id)"
+            />
+            <n-space :size="8">
+              <n-button size="small" dashed @click="addEgress">添加出口（代理）</n-button>
+            </n-space>
+          </div>
+          <n-form label-placement="top" size="small" style="margin-top: 12px">
+            <n-form-item label="默认出口优先级" feedback="未单独指定出口的站点使用；按选择顺序排优先级，留空即只用直连">
+              <n-select v-model:value="form.egress.default" multiple :options="egressOptions" placeholder="直连" />
+            </n-form-item>
+          </n-form>
+        </n-card>
+
         <n-card title="轮询策略" size="small">
           <n-form label-placement="top" size="small">
             <n-alert type="default" :show-icon="false" class="contract">
@@ -359,6 +429,11 @@ onMounted(() => {
   display: grid;
   grid-template-columns: 1fr 120px;
   gap: 0 12px;
+}
+.proxies {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 .row-2.even {
   grid-template-columns: 1fr 1fr;

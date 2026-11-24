@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/genguzzz/restockd/internal/domain"
+	"github.com/genguzzz/restockd/internal/egress"
 	"github.com/genguzzz/restockd/internal/engine"
 	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/provider"
@@ -474,6 +476,16 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	settings.Email.Password = maskSecret(settings.Email.Password)
 	settings.Bark.DeviceURLs = maskSecret(settings.Bark.DeviceURLs)
 	settings.Solver.ExternalToken = maskSecret(settings.Solver.ExternalToken)
+	settings.Egress.Proxies = append([]egress.Proxy(nil), settings.Egress.Proxies...)
+	for i := range settings.Egress.Proxies {
+		settings.Egress.Proxies[i].URL = maskProxyURL(settings.Egress.Proxies[i].URL)
+	}
+	if settings.Egress.Proxies == nil {
+		settings.Egress.Proxies = []egress.Proxy{}
+	}
+	if settings.Egress.Default == nil {
+		settings.Egress.Default = []string{}
+	}
 	if settings.NotifyEvents == nil {
 		settings.NotifyEvents = []string{}
 	}
@@ -490,6 +502,19 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	incoming.Email.Password = keepSecret(incoming.Email.Password, current.Email.Password)
 	incoming.Bark.DeviceURLs = keepSecret(incoming.Bark.DeviceURLs, current.Bark.DeviceURLs)
 	incoming.Solver.ExternalToken = keepSecret(incoming.Solver.ExternalToken, current.Solver.ExternalToken)
+	stored := map[string]string{}
+	for _, proxy := range current.Egress.Proxies {
+		stored[proxy.ID] = proxy.URL
+	}
+	for i, proxy := range incoming.Egress.Proxies {
+		if strings.Contains(proxy.URL, secretMask) {
+			incoming.Egress.Proxies[i].URL = stored[proxy.ID] // 打码的地址表示密码未改
+		}
+		if strings.TrimSpace(proxy.ID) == "" || proxy.ID == egress.Direct {
+			writeError(w, http.StatusBadRequest, "proxy id is required and must not be \"direct\"")
+			return
+		}
+	}
 	if err := s.engine.SaveSettings(r.Context(), incoming); err != nil {
 		writeStoreError(w, err)
 		return
@@ -518,6 +543,43 @@ func (s *Server) handleTestNotify(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "results": results})
+}
+
+// maskProxyURL 隐去代理地址里的密码：socks5://user:******@host:port。
+func maskProxyURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.User == nil {
+		return raw
+	}
+	if _, has := parsed.User.Password(); !has {
+		return raw
+	}
+	return strings.Replace(raw, parsed.User.String()+"@", parsed.User.Username()+":"+secretMask+"@", 1)
+}
+
+// handleTestEgress 经指定出口访问 Cloudflare trace，返回出口 IP / 地区 / 耗时。
+func (s *Server) handleTestEgress(w http.ResponseWriter, r *http.Request) {
+	route, err := s.engine.EgressRoute(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	session, _ := fetch.NewSession("https://www.cloudflare.com", nil, "")
+	started := time.Now()
+	resp, err := route.Client.Do(ctx, session, &fetch.Request{Method: http.MethodGet, URL: "https://www.cloudflare.com/cdn-cgi/trace"})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	result := map[string]any{"ok": true, "ms": time.Since(started).Milliseconds()}
+	for _, line := range strings.Split(string(resp.Body), "\n") {
+		if key, value, found := strings.Cut(line, "="); found && (key == "ip" || key == "loc" || key == "colo") {
+			result[key] = value
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // ---- stats ----
