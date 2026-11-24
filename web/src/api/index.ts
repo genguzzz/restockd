@@ -60,6 +60,7 @@ export const accountsApi = {
       user_agent: userAgent ?? '',
     }),
   check: (id: string) => http.post<Account>(`/api/accounts/${encodeURIComponent(id)}/check`),
+  login: (id: string) => http.post<Account>(`/api/accounts/${encodeURIComponent(id)}/login`),
 }
 
 export const watchesApi = {

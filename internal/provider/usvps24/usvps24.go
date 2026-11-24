@@ -1,7 +1,9 @@
 // Package usvps24 适配 usvps24.com（Laravel + Inertia 自研计费前端）。
 //
-// 商品目录与库存来自公开的 /orders/create Inertia 页面数据（无需登录）；锁单走 /cart/checkout，
-// 需要登录会话（laravel_session + XSRF-TOKEN）与 Cloudflare Turnstile token。
+// 监控只读公开库存接口 /api/v1/stock（站点要求：不要轮询首页、套餐页、下单页，否则整个出口 IP
+// 被暂停访问这些页面约 6 小时，返回 429）。下单页 /orders/create 的 Inertia 数据只在锁单 / 报价 /
+// 校验会话时读取，顺带缓存周期价、配置项、系统模板，用来补全目录。
+// 锁单走 /cart/checkout，需要登录会话（laravel_session + XSRF-TOKEN）与 Cloudflare Turnstile token。
 package usvps24
 
 import (
@@ -35,26 +37,29 @@ func init() {
 
 func meta() provider.Meta {
 	return provider.Meta{
-		Kind:            Kind,
-		Name:            "usvps24",
-		Description:     "usvps24.com（Inertia 计费系统）：公开接口监控库存，登录会话 + Turnstile 锁单",
-		Caps:            provider.Capabilities{Catalog: true, Coupon: true, Order: true, SessionCheck: true},
-		MinInterval:     30 * time.Second,
-		DefaultInterval: 60 * time.Second,
+		Kind:        Kind,
+		Name:        "usvps24",
+		Description: "usvps24.com（Inertia 计费系统）：公开库存接口 /api/v1/stock 监控，登录会话 + Turnstile 锁单",
+		Caps:        provider.Capabilities{Catalog: true, Coupon: true, Order: true, SessionCheck: true, Login: true},
+		// 接口每 60 秒更新且要求间隔 ≥60 秒；调度有 ±10% 抖动，取 70 秒保证下限。
+		MinInterval:     70 * time.Second,
+		DefaultInterval: 70 * time.Second,
 		DefaultFetch:    domain.FetchDirect,
 		Captcha:         []solver.Kind{solver.KindTurnstile},
 		ConfigFields: []provider.Field{
-			{Key: "products", Label: "只看这些商品", Type: provider.FieldList, Placeholder: "pinnacle-network-2,home-pool", Help: "slug 或 ID，留空表示全部"},
+			{Key: "products", Label: "只看这些商品", Type: provider.FieldList, Placeholder: "pinnacle-network-2,home-pool", Help: "填 slug（商品 ID 即 slug），留空表示全部"},
 		},
 	}
 }
 
-// Provider usvps24 实现；version 缓存 Inertia 资源版本，版本不符时服务端返回 409。
+// Provider usvps24 实现；version 缓存 Inertia 资源版本，版本不符时服务端返回 409；
+// props 缓存最近一次下单页数据，用于补全库存接口没有的周期价与配置项。
 type Provider struct {
 	baseURL string
 	only    map[string]bool
 	mu      sync.RWMutex
 	version string
+	props   *checkoutProps
 }
 
 var (
@@ -162,13 +167,145 @@ type rawCycle struct {
 	SetupFee int64  `json:"setup_fee_cents"`
 }
 
-// Catalog 实现 provider.Provider。
+// stockResponse 公开库存接口 /api/v1/stock 的返回（文档：/docs/stock-api）。
+type stockResponse struct {
+	GeneratedAt string      `json:"generated_at"`
+	Plans       []stockPlan `json:"plans"`
+}
+
+type stockPlan struct {
+	Slug        string         `json:"slug"`
+	Name        string         `json:"name"`
+	GroupTitle  string         `json:"group_title"`
+	LineLabel   string         `json:"line_label"`
+	Region      string         `json:"region"`
+	Currency    string         `json:"currency"`
+	PriceMonth  *float64       `json:"price_monthly"`
+	PriceTBD    bool           `json:"price_tbd"`
+	SetupFee    *float64       `json:"setup_fee"`
+	Specs       map[string]any `json:"specs"`
+	Status      string         `json:"status"`
+	Purchasable bool           `json:"purchasable"`
+	Stock       int            `json:"stock"`
+	URL         string         `json:"url"`
+}
+
+// Catalog 实现 provider.Provider：只读公开库存接口。
 func (p *Provider) Catalog(ctx context.Context, env provider.Env) (domain.Catalog, error) {
-	props, err := p.loadCheckout(ctx, env)
+	resp, err := env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodGet, URL: p.baseURL + "/api/v1/stock", Header: http.Header{"Accept": {"application/json"}}})
 	if err != nil {
 		return domain.Catalog{}, err
 	}
-	return p.toCatalog(props), nil
+	if resp.StatusCode != http.StatusOK {
+		return domain.Catalog{}, &fetch.HTTPError{StatusCode: resp.StatusCode, URL: resp.URL}
+	}
+	var stock stockResponse
+	if err := json.Unmarshal(resp.Body, &stock); err != nil {
+		return domain.Catalog{}, fmt.Errorf("decode stock api: %w", err)
+	}
+	return p.stockCatalog(&stock), nil
+}
+
+// stockCatalog 以库存接口为准（ID 用 slug），有下单页缓存时补全周期价、配置项与系统模板。
+func (p *Provider) stockCatalog(stock *stockResponse) domain.Catalog {
+	now := time.Now().UTC()
+	catalog := domain.Catalog{}
+	enriched := map[string]domain.Product{}
+	if props := p.cachedProps(); props != nil {
+		cached := p.toCatalog(props)
+		catalog.Gateways, catalog.Promo = cached.Gateways, cached.Promo
+		for _, product := range cached.Products {
+			enriched[product.Specs.Extra["slug"]] = product
+		}
+	}
+	for _, plan := range stock.Plans {
+		product := p.planProduct(plan, now)
+		if rich, ok := enriched[plan.Slug]; ok {
+			product.Prices = rich.Prices
+			product.Options = rich.Options
+			product.OSTemplates = rich.OSTemplates
+			product.NoDiscount = rich.NoDiscount
+			product.Specs.Extra["product_id"] = rich.ID
+		}
+		// 只按 slug 过滤：数字 ID 依赖下单页缓存，重启后为空会把商品全部滤掉。
+		if len(p.only) > 0 && !p.only[plan.Slug] {
+			continue
+		}
+		catalog.Products = append(catalog.Products, product)
+	}
+	return catalog
+}
+
+func (p *Provider) planProduct(plan stockPlan, now time.Time) domain.Product {
+	product := domain.Product{
+		ID:        plan.Slug,
+		Name:      firstNonEmpty(strings.TrimSpace(plan.Name), plan.Slug),
+		URL:       firstNonEmpty(plan.URL, p.baseURL+"/plans/"+plan.Slug),
+		FetchedAt: now,
+		Stock:     planStock(plan),
+		Specs: domain.Specs{
+			CPU:           asString(plan.Specs["cpu"]),
+			RAMMB:         asInt(plan.Specs["ram_mb"]),
+			DiskGB:        asInt(plan.Specs["disk_gb"]),
+			BandwidthMbps: asInt(plan.Specs["bandwidth_mbps"]),
+			TrafficGB:     asInt(plan.Specs["traffic_gb"]),
+			Location:      plan.Region,
+			IPType:        asString(plan.Specs["ip_type"]),
+			Extra:         map[string]string{"slug": plan.Slug},
+		},
+	}
+	if plan.Region != "" {
+		product.Specs.Extra["region"] = plan.Region
+	}
+	if plan.LineLabel != "" {
+		product.Specs.Extra["line"] = plan.LineLabel
+	}
+	if carrier := asString(plan.Specs["carrier"]); carrier != "" {
+		product.Specs.Extra["carrier"] = carrier
+	}
+	if plan.PriceMonth != nil && !plan.PriceTBD {
+		setup := int64(0)
+		if plan.SetupFee != nil {
+			setup = yuanToCents(*plan.SetupFee)
+		}
+		product.Prices = []domain.Price{{Cycle: domain.CycleMonthly, Amount: domain.Money{Cents: yuanToCents(*plan.PriceMonth), Currency: plan.Currency}, Setup: domain.Money{Cents: setup, Currency: plan.Currency}}}
+	}
+	return product
+}
+
+func yuanToCents(value float64) int64 { return int64(value*100 + 0.5) }
+
+// planStock 映射接口状态。invite_only 仍有余量时记为有货（会员账号可下单），Reason 标注邀请制。
+func planStock(plan stockPlan) domain.Stock {
+	switch plan.Status {
+	case "in_stock":
+		return domain.Stock{Status: domain.StockIn, Qty: positive(plan.Stock)}
+	case "preorder":
+		return domain.Stock{Status: domain.StockPreorder, Qty: positive(plan.Stock)}
+	case "invite_only":
+		if plan.Stock > 0 {
+			return domain.Stock{Status: domain.StockIn, Qty: positive(plan.Stock), Reason: "invite_only"}
+		}
+		zero := 0
+		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: "invite_only"}
+	case "coming_soon":
+		return domain.Stock{Status: domain.StockClosed, Reason: "coming_soon"}
+	case "sold_out":
+		zero := 0
+		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: "sold_out"}
+	default:
+		if plan.Purchasable && plan.Stock > 0 {
+			return domain.Stock{Status: domain.StockIn, Qty: positive(plan.Stock), Reason: plan.Status}
+		}
+		zero := 0
+		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: firstNonEmpty(plan.Status, "unavailable")}
+	}
+}
+
+func (p *Provider) cachedProps() *checkoutProps {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.props
 }
 
 // loadCheckout 优先用 Inertia JSON（体积小）；版本不匹配或首次访问时解析 HTML 中的 data-page。
@@ -195,6 +332,11 @@ func (p *Provider) loadCheckout(ctx context.Context, env provider.Env) (*checkou
 	var props checkoutProps
 	if err := json.Unmarshal(data.Props, &props); err != nil {
 		return nil, fmt.Errorf("decode props: %w", err)
+	}
+	if len(props.Products) > 0 {
+		p.mu.Lock()
+		p.props = &props
+		p.mu.Unlock()
 	}
 	return &props, nil
 }
@@ -406,10 +548,11 @@ type cartItem struct {
 	PickIP    bool           `json:"pick_ip"`
 }
 
-func buildItem(spec domain.OrderSpec) (cartItem, error) {
-	productID, err := strconv.ParseInt(spec.ProductID, 10, 64)
-	if err != nil {
-		return cartItem{}, fmt.Errorf("invalid product id %q", spec.ProductID)
+// buildItem 用下单页里的数字 ID（目录 ID 是 slug）。
+func buildItem(product rawProduct, spec domain.OrderSpec) (cartItem, error) {
+	productID := product.ID
+	if productID <= 0 {
+		return cartItem{}, fmt.Errorf("invalid product id for %q", spec.ProductID)
 	}
 	qty := spec.Qty
 	if qty <= 0 {
@@ -479,7 +622,7 @@ func (p *Provider) Quote(ctx context.Context, env provider.Env, spec domain.Orde
 }
 
 func (p *Provider) quote(ctx context.Context, env provider.Env, product rawProduct, spec domain.OrderSpec) (domain.Quote, error) {
-	item, err := buildItem(spec)
+	item, err := buildItem(product, spec)
 	if err != nil {
 		return domain.Quote{}, err
 	}
@@ -582,7 +725,7 @@ func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain
 	if spec.DryRun {
 		return domain.OrderResult{Total: quote.Total, Message: fmt.Sprintf("dry run: product available, gateway=%s, turnstile=%t", gateway, props.TurnstileSiteKey != "")}, nil
 	}
-	item, err := buildItem(spec)
+	item, err := buildItem(product, spec)
 	if err != nil {
 		return domain.OrderResult{}, err
 	}

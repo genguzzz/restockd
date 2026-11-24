@@ -26,6 +26,7 @@ export type EventType =
   | 'order'
   | 'challenge'
   | 'poll_error'
+  | 'account'
 export type ChallengeKind = 'cloudflare' | 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha'
 export type FieldType = 'text' | 'list' | 'bool' | 'password'
 
@@ -48,6 +49,7 @@ export interface ProviderMeta {
     coupon: boolean
     order: boolean
     session_check: boolean
+    login?: boolean
     stock_needs_login: boolean
   }
   default_fetch_mode: FetchMode
@@ -152,6 +154,12 @@ export interface Account {
   defaults: OrderDefaults
   created_at: string
   cookie_names: string[]
+  /** 托管登录用户名；密码永不回传，只有 has_password */
+  username?: string
+  has_password: boolean
+  login_at?: string
+  /** 站点拒绝了当前密码，自动登录已暂停 */
+  credentials_rejected?: boolean
 }
 
 export interface AccountInput {
@@ -161,6 +169,10 @@ export interface AccountInput {
   user_agent?: string
   defaults: OrderDefaults
   cookies_raw?: string
+  /** 省略表示不修改 */
+  username?: string
+  /** 省略或 "******" 不修改，空串清除 */
+  password?: string
 }
 
 export interface Watch {
@@ -279,6 +291,7 @@ export interface Settings {
     to: string
     starttls: boolean
   }
+  bark: { enabled: boolean; device_urls: string; group: string; sound: string; icon: string }
   solver: { flaresolverr_url: string; external_url: string; external_token: string; manual_timeout_sec: number }
   notify_events: EventType[]
 }

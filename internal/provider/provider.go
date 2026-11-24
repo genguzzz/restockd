@@ -18,8 +18,11 @@ import (
 	"github.com/genguzzz/restockd/internal/solver"
 )
 
-// ErrSessionExpired 账号会话失效，需要重新粘贴 Cookie。
+// ErrSessionExpired 账号会话失效：有托管凭据时引擎会自动重新登录，否则需要重新粘贴 Cookie。
 var ErrSessionExpired = errors.New("session expired")
+
+// ErrLoginFailed 站点明确拒绝了登录（账号或密码错误、账号被锁等），不应重试。
+var ErrLoginFailed = errors.New("login failed")
 
 // ErrOutOfStock 下单时站点返回无货。
 var ErrOutOfStock = errors.New("out of stock")
@@ -57,6 +60,8 @@ type Capabilities struct {
 	Coupon       bool `json:"coupon"`
 	Order        bool `json:"order"`
 	SessionCheck bool `json:"session_check"`
+	// Login 支持用托管的账号密码自动登录（实现 Authenticator）。
+	Login bool `json:"login"`
 	// StockNeedsLogin 查询库存是否必须登录（决定监控时是否带账号会话）。
 	StockNeedsLogin bool `json:"stock_needs_login"`
 }
@@ -107,6 +112,15 @@ type SessionInfo struct {
 // SessionChecker 可选能力：校验账号 Cookie 是否仍有效。
 type SessionChecker interface {
 	CheckSession(ctx context.Context, env Env) (SessionInfo, error)
+}
+
+// Authenticator 可选能力：用托管凭据登录。
+//
+// 实现约定：所有请求经 env.Client / env.Session，登录成功后 Cookie 留在 env.Session（引擎负责落库）；
+// 遇到验证码交给 env.Solver；账号密码被拒返回 ErrLoginFailed（包装站点原文）；
+// 返回的 SessionInfo 尽量带上身份与余额。引擎保证同一账号的 Login 串行执行。
+type Authenticator interface {
+	Login(ctx context.Context, env Env, creds domain.Credentials) (SessionInfo, error)
 }
 
 // Factory 依据站点配置构造 Provider 实例。

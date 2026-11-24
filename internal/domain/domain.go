@@ -166,21 +166,38 @@ const (
 	AccountLimited AccountStatus = "rate_limited"
 )
 
-// Account 托管的站点账号：以 Cookie 会话为主，可选保存登录凭据供实现自动登录。
+// Credentials 托管的登录凭据（密钥）：单独存储，API 永不回传密码。
+type Credentials struct {
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+// Usable 用户名与密码齐全才能自动登录。
+func (c Credentials) Usable() bool { return c.Username != "" && c.Password != "" }
+
+// Account 托管的站点账号：Cookie 会话 + 可选登录凭据。有凭据且站点支持时，会话失效会自动重新登录。
 type Account struct {
 	ID          string         `json:"id"`
 	SiteID      string         `json:"site_id"`
 	Label       string         `json:"label"`
 	Cookies     []*http.Cookie `json:"-"`
-	UserAgent   string         `json:"user_agent,omitempty"`
-	Status      AccountStatus  `json:"status"`
-	Identity    string         `json:"identity,omitempty"`
-	Balance     *Money         `json:"balance,omitempty"`
-	CheckedAt   time.Time      `json:"checked_at,omitempty"`
-	LastError   string         `json:"last_error,omitempty"`
-	Defaults    OrderDefaults  `json:"defaults"`
-	CreatedAt   time.Time      `json:"created_at"`
-	CookieNames []string       `json:"cookie_names"`
+	Credentials Credentials    `json:"-"`
+	// Username / HasPassword 是凭据的对外展示（由 SyncCookieNames 同步）。
+	Username    string    `json:"username,omitempty"`
+	HasPassword bool      `json:"has_password"`
+	LoginAt     time.Time `json:"login_at,omitempty"`
+	// CredentialsRejected 站点明确拒绝了当前密码：暂停自动登录（避免反复失败触发封禁），
+	// 直到用户修改凭据或手动点「登录」。
+	CredentialsRejected bool          `json:"credentials_rejected,omitempty"`
+	UserAgent           string        `json:"user_agent,omitempty"`
+	Status              AccountStatus `json:"status"`
+	Identity            string        `json:"identity,omitempty"`
+	Balance             *Money        `json:"balance,omitempty"`
+	CheckedAt           time.Time     `json:"checked_at,omitempty"`
+	LastError           string        `json:"last_error,omitempty"`
+	Defaults            OrderDefaults `json:"defaults"`
+	CreatedAt           time.Time     `json:"created_at"`
+	CookieNames         []string      `json:"cookie_names"`
 }
 
 // OrderDefaults 账号级默认下单参数，Watch 未填写时回落到这里。
@@ -285,6 +302,8 @@ const (
 	EventOrder       EventType = "order"
 	EventChallenge   EventType = "challenge"
 	EventPollError   EventType = "poll_error"
+	// EventAccount 账号异常：会话失效且无法自动恢复、自动登录被拒。
+	EventAccount EventType = "account"
 )
 
 // Event 事件流记录。
@@ -298,13 +317,15 @@ type Event struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// SyncCookieNames 按当前 Cookie 刷新对外展示的名称列表（值永不外露）。
+// SyncCookieNames 刷新密钥字段的对外展示：Cookie 名称列表、用户名、是否保存了密码（值永不外露）。
 func (a *Account) SyncCookieNames() {
 	names := make([]string, 0, len(a.Cookies))
 	for _, cookie := range a.Cookies {
 		names = append(names, cookie.Name)
 	}
 	a.CookieNames = names
+	a.Username = a.Credentials.Username
+	a.HasPassword = a.Credentials.Password != ""
 }
 
 var cycleOrder = map[BillingCycle]int{CycleMonthly: 1, CycleQuarterly: 2, CycleSemiannually: 3, CycleAnnually: 4, CycleBiennially: 5, CycleTriennially: 6, CycleOneTime: 7}

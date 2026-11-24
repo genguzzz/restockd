@@ -170,7 +170,13 @@ func (e *Engine) pollSite(ctx context.Context, runner *siteRunner) error {
 		return err
 	}
 	started := time.Now()
-	catalog, pollErr := runner.provider.Catalog(ctx, env)
+	var catalog domain.Catalog
+	// 只有声明「库存需登录」的站点才在无 Cookie 时预先登录；公开库存先直接拉。
+	pollErr := e.withSession(ctx, runner.provider, account, env, runner.provider.Meta().Caps.StockNeedsLogin, func() error {
+		var err error
+		catalog, err = runner.provider.Catalog(ctx, env)
+		return err
+	})
 	e.persistSession(ctx, account, env.Session)
 	if pollErr != nil {
 		e.markPollResult(ctx, site.ID, pollErr)
@@ -195,11 +201,34 @@ func (e *Engine) pollSite(ctx context.Context, runner *siteRunner) error {
 		return err
 	}
 	watched := watchIndex(watches)
+	if idSchemeChanged(previous, catalog.Products) {
+		// 商品 ID 与上次完全不重合：适配器换了 ID 体系（如 usvps24 数字 ID → slug），按首次抓取处理，
+		// 不把全部商品当成新上架 / 补货刷屏；引用旧 ID 的关注规则需要用户重新选择商品。
+		e.log.Warn("product ids changed completely, treating poll as baseline", "site", site.ID, "previous", len(previous), "current", len(catalog.Products), "watches", len(watches))
+		previous = nil
+	}
 	for _, event := range Diff(site.ID, previous, catalog.Products) {
 		e.recordEvent(ctx, event, e.messageFor(site, event, watched))
 	}
 	e.triggerWatches(site, catalog.Products, watches)
 	return nil
+}
+
+// idSchemeChanged 两次都有商品但 ID 没有任何交集。
+func idSchemeChanged(previous, current []domain.Product) bool {
+	if len(previous) == 0 || len(current) == 0 {
+		return false
+	}
+	seen := make(map[string]bool, len(previous))
+	for _, product := range previous {
+		seen[product.ID] = true
+	}
+	for _, product := range current {
+		if seen[product.ID] {
+			return false
+		}
+	}
+	return true
 }
 
 // watchIndex 商品 ID → 是否有启用的通知型关注。
@@ -237,6 +266,7 @@ func (e *Engine) reportPollError(ctx context.Context, site domain.Site, err erro
 		detail += "；请在站点设置中启用 FlareSolverr，或给监控账号粘贴同一 IP/UA 获取的 cf_clearance Cookie"
 	}
 	if errors.Is(err, provider.ErrSessionExpired) && site.MonitorAccount != "" {
+		// 自动登录失败已在 login 里记录并通知；这里只处理无凭据的情况。
 		e.markAccountStatus(ctx, site.MonitorAccount, domain.AccountExpired, err.Error())
 	}
 	e.recordEvent(ctx, domain.Event{Type: domain.EventPollError, SiteID: site.ID, Title: site.Name + " 轮询失败", Detail: detail}, nil)
@@ -285,7 +315,7 @@ func (e *Engine) markAccountStatus(ctx context.Context, accountID string, status
 		account.CheckedAt = time.Now().UTC()
 	})
 	if err == nil && status == domain.AccountExpired {
-		e.recordEvent(ctx, domain.Event{Type: domain.EventPollError, SiteID: account.SiteID, Title: "账号会话失效: " + account.Label, Detail: "请重新粘贴 Cookie"},
-			&notify.Message{Title: "账号会话失效: " + account.Label, Body: "站点 " + account.SiteID + " 需要重新粘贴 Cookie"})
+		e.recordEvent(ctx, domain.Event{Type: domain.EventAccount, SiteID: account.SiteID, Title: "账号会话失效: " + account.Label, Detail: "请重新粘贴 Cookie，或给账号设置用户名密码以自动登录"},
+			&notify.Message{Title: "账号会话失效: " + account.Label, Body: "站点 " + account.SiteID + " 需要重新粘贴 Cookie，或设置用户名密码自动登录"})
 	}
 }

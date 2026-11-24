@@ -1,6 +1,7 @@
 package whmcs
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -106,7 +107,21 @@ func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain
 		return domain.OrderResult{Total: quote.Total}, fmt.Errorf("%w: %s: %s", provider.ErrCouponInvalid, spec.Coupon, quote.Message)
 	}
 	if spec.DryRun {
-		return domain.OrderResult{Total: quote.Total, Message: "dry run: stopped before checkout submit; " + quote.Message}, nil
+		// 结算表单能组装（支付方式可选）才算链路通；验证码只探测不求解。
+		form := checkout.doc.Find(`#frmCheckout, form[name="orderfrm"], form[action*="a=checkout"]`).First()
+		gateway, err := pickGateway(form, spec.Gateway)
+		if err != nil {
+			return domain.OrderResult{Total: quote.Total}, err
+		}
+		captcha := "none"
+		if kind, _, found := htmlutil.DetectCaptcha(checkout.doc); found {
+			captcha = string(kind)
+		}
+		message := fmt.Sprintf("dry run: stopped before checkout submit; gateway=%s, captcha=%s", gateway, captcha)
+		if quote.Message != "" {
+			message += "; " + quote.Message
+		}
+		return domain.OrderResult{Total: quote.Total, Message: message}, nil
 	}
 	form, err := p.checkoutForm(ctx, env, checkout, spec)
 	if err != nil {
@@ -196,17 +211,46 @@ func (p *Provider) addProduct(ctx context.Context, env provider.Env, spec domain
 	if values.Get("token") == "" {
 		values.Set("token", htmlutil.CSRFToken(conf.doc, conf.resp.Body))
 	}
+	// 与浏览器一致走 AJAX 校验：成功时响应为空，失败时返回 <li> 错误列表。
+	// 非 AJAX 提交在部分主题（Lagom）下会停留在配置页且不入车，页面里还常驻一个隐藏的
+	// “请更正下列错误”模板，无法据此判断成败。
+	values.Set("ajax", "1")
 	result, err := p.post(ctx, env, "/cart.php", values)
 	if err != nil {
 		return fmt.Errorf("configure product: %w", err)
 	}
-	if message := errorMessage(result.doc); message != "" && !strings.Contains(result.resp.URL, "a=view") {
+	if message := ajaxErrors(result); message != "" {
 		if outOfStockPattern.MatchString(message) {
 			return provider.ErrOutOfStock
 		}
 		return fmt.Errorf("configure product: %s", message)
 	}
 	return nil
+}
+
+// ajaxErrors 解析 a=confproduct&ajax=1 的响应：空表示通过，否则拼接各条 <li> 错误。
+// 若站点忽略 ajax 返回了整页，则只看可见的错误提示（整页里的导航 <li> 不能当错误）。
+func ajaxErrors(result *page) string {
+	doc := result.doc
+	if bytes.Contains(bytes.ToLower(result.resp.Body), []byte("<body")) {
+		// 忽略 ajax 的主题会跳转：落到购物车 / 结算 / 域名页即已入车，页面上的提示不是配置错误。
+		for _, marker := range []string{"a=view", "a=checkout", "a=confdomains"} {
+			if strings.Contains(result.resp.URL, marker) {
+				return ""
+			}
+		}
+		return errorMessage(doc)
+	}
+	var messages []string
+	doc.Find("li").Each(func(_ int, node *goquery.Selection) {
+		if text := htmlutil.CleanText(node.Text()); text != "" {
+			messages = append(messages, text)
+		}
+	})
+	if len(messages) > 0 {
+		return strings.Join(messages, "; ")
+	}
+	return errorMessage(doc)
 }
 
 // applyServerFields 填写 VPS 商品常见的主机名 / root 密码 / NS 前缀，避免必填校验失败。
@@ -218,7 +262,8 @@ func applyServerFields(values url.Values, spec domain.OrderSpec) {
 		}
 		values.Set("hostname", hostname)
 	}
-	if _, ok := values["rootpw"]; ok && values.Get("rootpw") == "" {
+	// 部分主题 HTML 里 rootpw 预填 "N/A"，靠前端 JS 生成真实密码。
+	if _, ok := values["rootpw"]; ok && (values.Get("rootpw") == "" || strings.EqualFold(values.Get("rootpw"), "N/A")) {
 		values.Set("rootpw", "Rk"+randomHex(8)+"#9")
 	}
 	if _, ok := values["ns1prefix"]; ok && values.Get("ns1prefix") == "" {
@@ -252,8 +297,30 @@ func (p *Provider) applyPromo(ctx context.Context, env provider.Env, code string
 // promoUnconfirmed 页面没有明确拒绝也没有明确接受：不阻止下单，交给结算页金额体现。
 const promoUnconfirmed = "promo not confirmed by page"
 
+// errorMessage 取第一条可见的错误提示；跳过主题常驻的隐藏模板（.hidden / .d-none / display:none）。
 func errorMessage(doc *goquery.Document) string {
-	return htmlutil.CleanText(doc.Find(".alert-danger, .checkout-error-feedback, .errorbox, #errorBox").First().Text())
+	message := ""
+	doc.Find(".alert-danger, .checkout-error-feedback, .errorbox, #errorBox").EachWithBreak(func(_ int, node *goquery.Selection) bool {
+		if isHidden(node) {
+			return true
+		}
+		message = htmlutil.CleanText(node.Text())
+		return message == ""
+	})
+	return message
+}
+
+func isHidden(node *goquery.Selection) bool {
+	for current := node; current.Length() > 0; current = current.Parent() {
+		if current.HasClass("hidden") || current.HasClass("d-none") || current.HasClass("w-hidden") {
+			return true
+		}
+		style := strings.ReplaceAll(strings.ToLower(current.AttrOr("style", "")), " ", "")
+		if strings.Contains(style, "display:none") {
+			return true
+		}
+	}
+	return false
 }
 
 func fillTotals(doc *goquery.Document, currency string, quote *domain.Quote) {

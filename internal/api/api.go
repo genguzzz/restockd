@@ -111,6 +111,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/accounts/{id}", s.auth(s.handleDeleteAccount))
 	s.mux.HandleFunc("POST /api/accounts/{id}/cookies", s.auth(s.handleSetCookies))
 	s.mux.HandleFunc("POST /api/accounts/{id}/check", s.auth(s.handleCheckAccount))
+	s.mux.HandleFunc("POST /api/accounts/{id}/login", s.auth(s.handleLoginAccount))
 	s.mux.HandleFunc("GET /api/watches", s.auth(s.handleListWatches))
 	s.mux.HandleFunc("POST /api/watches", s.auth(s.handleSaveWatch))
 	s.mux.HandleFunc("PUT /api/watches/{id}", s.auth(s.handleSaveWatch))

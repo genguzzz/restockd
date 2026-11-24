@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -84,5 +85,39 @@ func TestCountPlacedSinceIgnoresDryRunAndFailures(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("want 2 placed in window, got %d", count)
+	}
+}
+
+func TestMigrateAddsSecretsColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	old, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// v1 表结构：没有 secrets 列。
+	if _, err := old.Exec(`CREATE TABLE accounts (id TEXT PRIMARY KEY, site_id TEXT NOT NULL, data TEXT NOT NULL, cookies TEXT NOT NULL DEFAULT '[]');
+INSERT INTO accounts(id, site_id, data, cookies) VALUES('a1', 's1', '{"id":"a1","site_id":"s1","label":"old"}', '[{"name":"sid","value":"v"}]');`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	ctx := context.Background()
+	for i := 0; i < 2; i++ { // 第二次打开时列已存在，必须幂等
+		st, err := Open(path)
+		if err != nil {
+			t.Fatalf("open #%d: %v", i, err)
+		}
+		account, err := st.GetAccount(ctx, "a1")
+		if err != nil || account.Label != "old" || len(account.Cookies) != 1 || (i == 0 && account.HasPassword) {
+			t.Fatalf("legacy account unreadable: %v %+v", err, account)
+		}
+		account.Credentials = domain.Credentials{Username: "u", Password: "p"}
+		if err := st.SaveAccount(ctx, account); err != nil {
+			t.Fatal(err)
+		}
+		again, _ := st.GetAccount(ctx, "a1")
+		if again.Credentials.Password != "p" || !again.HasPassword || again.Username != "u" {
+			t.Fatalf("credentials not persisted: %+v", again)
+		}
+		st.Close()
 	}
 }

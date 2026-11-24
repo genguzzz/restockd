@@ -171,6 +171,9 @@ func (s *Server) handleSaveAccount(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		domain.Account
 		CookiesRaw string `json:"cookies_raw"`
+		// 托管凭据：username 省略表示不修改；password 省略或 "******" 不修改，空串清除。
+		Username *string `json:"username"`
+		Password *string `json:"password"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -183,6 +186,20 @@ func (s *Server) handleSaveAccount(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	if body.Username != nil || body.Password != nil {
+		username := saved.Credentials.Username
+		if body.Username != nil {
+			username = strings.TrimSpace(*body.Username)
+		}
+		password := body.Password
+		if password != nil && *password == secretMask {
+			password = nil
+		}
+		if saved, err = s.engine.SetCredentials(r.Context(), saved.ID, username, password); err != nil {
+			writeStoreError(w, err)
+			return
+		}
 	}
 	if strings.TrimSpace(body.CookiesRaw) != "" {
 		cookies, err := fetch.ParseCookies(body.CookiesRaw)
@@ -225,6 +242,28 @@ func (s *Server) handleSetCookies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cookie_names": account.CookieNames})
+}
+
+// handleLoginAccount 用托管凭据立即登录；站点侧失败返回 502 与原因（账号状态同步更新），
+// 本地前提不满足（无凭据 / 站点不支持）返回 400。超时留足人工验证的时间。
+func (s *Server) handleLoginAccount(w http.ResponseWriter, r *http.Request) {
+	timeout := time.Duration(s.engine.Settings().Solver.ManualTimeoutSec)*time.Second + time.Minute
+	if timeout < 2*time.Minute {
+		timeout = 2 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	account, err := s.engine.LoginAccount(ctx, r.PathValue("id"))
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, account)
+	case errors.Is(err, engine.ErrNoCredentials), errors.Is(err, engine.ErrNoAuthenticator):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case account.ID == "":
+		writeStoreError(w, err) // 账号或站点不存在
+	default:
+		writeError(w, http.StatusBadGateway, err.Error())
+	}
 }
 
 func (s *Server) handleCheckAccount(w http.ResponseWriter, r *http.Request) {
@@ -432,6 +471,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	settings := s.engine.Settings()
 	settings.Telegram.BotToken = maskSecret(settings.Telegram.BotToken)
 	settings.Email.Password = maskSecret(settings.Email.Password)
+	settings.Bark.DeviceURLs = maskSecret(settings.Bark.DeviceURLs)
 	settings.Solver.ExternalToken = maskSecret(settings.Solver.ExternalToken)
 	if settings.NotifyEvents == nil {
 		settings.NotifyEvents = []string{}
@@ -447,6 +487,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	current := s.engine.Settings()
 	incoming.Telegram.BotToken = keepSecret(incoming.Telegram.BotToken, current.Telegram.BotToken)
 	incoming.Email.Password = keepSecret(incoming.Email.Password, current.Email.Password)
+	incoming.Bark.DeviceURLs = keepSecret(incoming.Bark.DeviceURLs, current.Bark.DeviceURLs)
 	incoming.Solver.ExternalToken = keepSecret(incoming.Solver.ExternalToken, current.Solver.ExternalToken)
 	if err := s.engine.SaveSettings(r.Context(), incoming); err != nil {
 		writeStoreError(w, err)
@@ -459,12 +500,15 @@ func (s *Server) handleTestNotify(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	settings := s.engine.Settings()
-	results := map[string]string{"telegram": "disabled", "email": "disabled"}
+	results := map[string]string{"telegram": "disabled", "email": "disabled", "bark": "disabled"}
 	if settings.Telegram.Enabled {
 		results["telegram"] = "not configured"
 	}
 	if settings.Email.Enabled {
 		results["email"] = "not configured"
+	}
+	if settings.Bark.Enabled {
+		results["bark"] = "not configured"
 	}
 	for channel, err := range s.engine.TestNotify(ctx) {
 		results[channel] = "ok"

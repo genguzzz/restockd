@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>购物车 - US Residential VPS | AaITR.com</title>
+    <meta name="description" content="" />
+    <meta name="keywords" content="" />
+    <link href="/templates/six/img/favicon.png" rel="icon">
+    <!-- Styling -->
+<link href="/assets/fonts/css/open-sans-family.css" rel="stylesheet" type="text/css" />
+<link href="/assets/fonts/css/raleway-family.css" rel="stylesheet" type="text/css" />
+<link href="/templates/six/css/all.min.css?v=5ef3fc" rel="stylesheet">
+<link href="/assets/css/fontawesome-all.min.css" rel="stylesheet">
+<link href="/templates/six/css/custom.css" rel="stylesheet">
+
+<!-- HTML5 Shim and Respond.js IE8 support of HTML5 elements and media queries -->
+<!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+<!--[if lt IE 9]>
+  <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+  <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
+<![endif]-->
+
+<script type="text/javascript">
+    var csrfToken = '0000000000000000000000000000000000000000',
+        markdownGuide = '降价指南',
+        locale = 'en',
+        saved = '保存',
+        saving = '自动保存',
+        whmcsBaseUrl = "";
+    </script>
+<script src="/templates/six/js/scripts.min.js?v=5ef3fc"></script>
+
+    
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id:"LGpRL7mQZtsXBppd",ck:"LGpRL7mQZtsXBppd"})</script>
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-9GMB89XGB8"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag("js", new Date());
+      gtag("config", "G-9GMB89XGB8");
+    </script>
+    
+
+</head>
+<body data-phone-cc-input="1">
+<style>
+    .marketing-banner {
+        padding: 12px 20px;
+        margin: 0;
+        text-align: center;
+        position: relative;
+        font-size: 14px;
+        line-height: 1.6;
+        border-bottom: 1px solid rgba(0,0,0,0.1);
+    }
+    .marketing-banner i {
+        margin-right: 8px;
+    }
+    .marketing-banner a.banner-link {
+        color: inherit;
+        text-decoration: underline;
+        font-weight: bold;
+        margin-left: 10px;
+    }
+    .marketing-banner a.banner-link:hover {
+        opacity: 0.8;
+    }
+    .marketing-banner .close-banner {
+        position: absolute;
+        right: 20px;
+        top: 50%;
+        transform: translateY(-50%);
+        cursor: pointer;
+        opacity: 0.6;
+        font-size: 20px;
+        line-height: 1;
+        padding: 0 5px;
+    }
+    .marketing-banner .close-banner:hover {
+        opacity: 1;
+    }
+    </style><div class="marketing-banner" style="background-color: #17a2b8; color: #ffffff;" data-banner-id="12" data-dismissible="1">11月1日起将禁止公网暴露不安全的代理协议和常用Web端口托管Web服务 <a href="https://www.aaitr.com/link.php?id=14" class="banner-link" target="_blank" onclick="trackBannerClick(12)">详细说明</a><span class="close-banner" onclick="closeBanner(this)" title="关闭">×</span></div><script>
+    function closeBanner(elem) {
+        var banner = elem.closest(".marketing-banner");
+        if (banner) {
+            banner.style.display = "none";
+            
+            // 将关闭状态记录到 Cookie（30天过期）
+            var bannerId = banner.getAttribute("data-banner-id");
+            if (bannerId) {
+                var expiryDate = new Date();
+                expiryDate.setTime(expiryDate.getTime() + (30 * 24 * 60 * 60 * 1000)); // 30天
+                var cookieName = "marketing_banner_closed_" + bannerId;
+                document.cookie = cookieName + "=1; expires=" + expiryDate.toUTCString() + "; path=/";
+            }
+        }
+    }
+    
+    function trackBannerClick(bannerId) {
+        // 异步记录点击统计
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", "index.php?m=marketing_banner&action=track_click", true);
+        xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+        xhr.send("banner_id=" + bannerId);
+    }
+    </script>
+
+
+<script>
+var _whmcsCurrentLang = 'chinese';
+var _whmcsCurrentCurrency = 'CNY';
+var _whmcsCurrencyId_CNY = 1;
+var _whmcsCurrencyId_USD = 2;
+var _whmcsPageBack = '/store/rbn?';
+
+(function() {
+    /* 已执行过自动检测则跳过（允许用户后续手动切换） */
+    if (localStorage.getItem('_whmcs_lang_detected')) {
+        return;
+    }
+
+    var browserLang = (navigator.language || navigator.browserLanguage || '').toLowerCase();
+    var isChineseBrowser = browserLang.indexOf('zh') === 0;
+
+    var desiredLang = isChineseBrowser ? 'chinese' : 'english';
+    var desiredCurrencyCode = isChineseBrowser ? 'CNY' : 'USD';
+    var desiredCurrencyId = isChineseBrowser ? _whmcsCurrencyId_CNY : _whmcsCurrencyId_USD;
+
+    /* 语言不匹配 → 一次请求同时设置语言(GET)和货币(POST) */
+    if (_whmcsCurrentLang !== desiredLang) {
+        localStorage.setItem('_whmcs_lang_detected', '1');
+        var form = document.createElement('form');
+        form.method = 'POST';
+        form.action = _whmcsPageBack + 'language=' + desiredLang;
+        var input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'currency';
+        input.value = desiredCurrencyId;
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+        return;
+    }
+
+    /* 语言已匹配但货币不匹配 → 单独提交货币 */
+    if (_whmcsCurrentCurrency !== desiredCurrencyCode) {
+        localStorage.setItem('_whmcs_lang_detected', '1');
+        var form = document.createElement('form');
+        form.method = 'POST';
+        form.action = window.location.href;
+        var input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'currency';
+        input.value = desiredCurrencyId;
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+    }
+
+    /* 语言和货币都已匹配 → 标记已检测，无需操作 */
+    localStorage.setItem('_whmcs_lang_detected', '1');
+})();
+</script>
+
+<section id="header">
+    <div class="container">
+        <ul class="top-nav">
+                            <li class="language-switcher dropdown">
+                    <a href="#" class="dropdown-toggle language-dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                        中文 <span class="caret"></span>
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-right language-dropdown-menu">
+                                                    <li class="active">
+                                <a href="/store/rbn?language=chinese">中文</a>
+                            </li>
+                                                    <li >
+                                <a href="/store/rbn?language=english">English</a>
+                            </li>
+                                            </ul>
+                </li>
+                                        <li>
+                    <a href="/clientarea.php">登录</a>
+                </li>
+                                    <li>
+                        <a href="/register.php">注册</a>
+                    </li>
+                                <li class="primary-action">
+                    <a href="/cart.php?a=view" class="btn">
+                        查看购物车
+                    </a>
+                </li>
+                                </ul>
+
+        <a href="/index.php" class="logo"><img src="/assets/img/logo.svg" alt="US Residential VPS | AaITR.com"></a>
+
+    </div>
+</section>
+
+<section id="main-menu">
+
+    <nav id="nav" class="navbar navbar-default navbar-main" role="navigation">
+        <div class="container">
+            <!-- Brand and toggle get grouped for better mobile display -->
+            <div class="navbar-header">
+                <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#primary-nav">
+                    <span class="sr-only">切换导览</span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                </button>
+            </div>
+
+            <!-- Collect the nav links, forms, and other content for toggling -->
+            <div class="collapse navbar-collapse" id="primary-nav">
+
+                <ul class="nav navbar-nav">
+
+                        <li menuItemName="Home" class="" id="Primary_Navbar-Home">
+        <a href="/index.php">
+                        首页
+                                </a>
+            </li>
+    <li menuItemName="Store" class="dropdown" id="Primary_Navbar-Store">
+        <a class="dropdown-toggle" data-toggle="dropdown" href="#">
+                        产品
+                        &nbsp;<b class="caret"></b>        </a>
+                    <ul class="dropdown-menu">
+                            <li menuItemName="Browse Products Services" id="Primary_Navbar-Store-Browse_Products_Services">
+                    <a href="/store">
+                                                浏览全部
+                                            </a>
+                </li>
+                            <li menuItemName="Shop Divider 1" class="nav-divider" id="Primary_Navbar-Store-Shop_Divider_1">
+                    <a href="">
+                                                -----
+                                            </a>
+                </li>
+                            <li menuItemName="静态家宽VPS" id="Primary_Navbar-Store-静态家宽VPS">
+                    <a href="/store/srv">
+                                                静态家宽VPS
+                                            </a>
+                </li>
+                            <li menuItemName="住宅家宽NAT" id="Primary_Navbar-Store-住宅家宽NAT">
+                    <a href="/store/rbn">
+                                                住宅家宽NAT
+                                            </a>
+                </li>
+                            <li menuItemName="住宅家宽定制" id="Primary_Navbar-Store-住宅家宽定制">
+                    <a href="/store/vip">
+                                                住宅家宽定制
+                                            </a>
+                </li>
+                        </ul>
+            </li>
+    <li menuItemName="Affiliates" class="" id="Primary_Navbar-Affiliates">
+        <a href="/affiliates.php">
+                        推广赚钱
+                                </a>
+            </li>
+    <li menuItemName="Docs" class="" id="Primary_Navbar-Docs">
+        <a href="https://www.aaitr.com/link.php?id=1" target="_blank">
+                        <i class="fas fa-book-open"></i> 文档教程
+                                </a>
+            </li>
+    <li menuItemName="Notification Channel" class="" id="Primary_Navbar-Notification_Channel">
+        <a href="https://www.aaitr.com/link.php?id=2" target="_blank">
+                        <i class="fas fa-bell"></i> 通知频道
+                                </a>
+            </li>
+
+                </ul>
+
+                <ul class="nav navbar-nav navbar-right">
+
+                        <li menuItemName="Account" class="dropdown" id="Secondary_Navbar-Account">
+        <a class="dropdown-toggle" data-toggle="dropdown" href="#">
+                        帐户
+                        &nbsp;<b class="caret"></b>        </a>
+                    <ul class="dropdown-menu">
+                            <li menuItemName="Login" id="Secondary_Navbar-Account-Login">
+                    <a href="/clientarea.php">
+                                                登录
+                                            </a>
+                </li>
+                            <li menuItemName="Register" id="Secondary_Navbar-Account-Register">
+                    <a href="/register.php">
+                                                注册
+                                            </a>
+                </li>
+                            <li menuItemName="Divider" class="nav-divider" id="Secondary_Navbar-Account-Divider">
+                    <a href="">
+                                                -----
+                                            </a>
+                </li>
+                            <li menuItemName="Forgot Password?" id="Secondary_Navbar-Account-Forgot_Password?">
+                    <a href="/password/reset">
+                                                忘记密码？
+                                            </a>
+                </li>
+                        </ul>
+            </li>
+
+                </ul>
+
+            </div><!-- /.navbar-collapse -->
+        </div>
+    </nav>
+
+</section>
+
+
+
+<section id="main-body">
+    <div class="container">
+        <div class="row">
+
+                <!-- Container for main page display content -->
+        <div class="col-xs-12 main-content">
+            
+
+<link rel="stylesheet" type="text/css" href="/templates/orderforms/standard_cart/css/all.min.css?v=5ef3fc" />
+<script type="text/javascript" src="/templates/orderforms/standard_cart/js/scripts.min.js?v=5ef3fc"></script>
+<div id="order-standard_cart">
+    <div class="row">
+        <div class="cart-sidebar sidebar">
+                <div menuItemName="Categories" class="panel card card-sidebar mb-3 panel-sidebar">
+        <div class="panel-heading card-header">
+            <h3 class="panel-title">
+                                    <i class="fas fa-shopping-cart"></i>&nbsp;
+                
+                分类
+
+                
+                <i class="fas fa-chevron-up card-minimise panel-minimise pull-right float-right"></i>
+            </h3>
+        </div>
+
+        
+                    <div class="list-group collapsable-card-body">
+                                                            <a menuItemName="静态家宽VPS" href="/store/srv" class="list-group-item list-group-item-action" id="Secondary_Sidebar-Categories-静态家宽VPS">
+                            
+                            静态家宽VPS
+
+                                                    </a>
+                                                                                <a menuItemName="住宅家宽NAT" href="/store/rbn" class="list-group-item list-group-item-action active" id="Secondary_Sidebar-Categories-住宅家宽NAT">
+                            
+                            住宅家宽NAT
+
+                                                    </a>
+                                                                                <a menuItemName="住宅家宽定制" href="/store/vip" class="list-group-item list-group-item-action" id="Secondary_Sidebar-Categories-住宅家宽定制">
+                            
+                            住宅家宽定制
+
+                                                    </a>
+                                                </div>
+        
+            </div>
+
+        <div menuItemName="Actions" class="panel card card-sidebar mb-3 panel-sidebar">
+        <div class="panel-heading card-header">
+            <h3 class="panel-title">
+                                    <i class="fas fa-plus"></i>&nbsp;
+                
+                动作
+
+                
+                <i class="fas fa-chevron-up card-minimise panel-minimise pull-right float-right"></i>
+            </h3>
+        </div>
+
+        
+                    <div class="list-group collapsable-card-body">
+                                                            <a menuItemName="View Cart" href="/cart.php?a=view" class="list-group-item list-group-item-action" id="Secondary_Sidebar-Actions-View_Cart">
+                                                            <i class="fas fa-shopping-cart fa-fw"></i>&nbsp;
+                            
+                            查看购物车
+
+                                                    </a>
+                                                </div>
+        
+            </div>
+
+        <div menuItemName="Choose Currency" class="panel card card-sidebar mb-3 panel-sidebar">
+        <div class="panel-heading card-header">
+            <h3 class="panel-title">
+                                    <i class="fas fa-plus"></i>&nbsp;
+                
+                选择货币别
+
+                
+                <i class="fas fa-chevron-up card-minimise panel-minimise pull-right float-right"></i>
+            </h3>
+        </div>
+
+                    <div class="panel-body card-body collapsable-card-body">
+                <form method="post" action="/store/rbn">
+<input type="hidden" name="token" value="0000000000000000000000000000000000000000" />
+    <select name="currency" onchange="submit()" class="form-control"><option value="1" selected>CNY</option><option value="2">USD</option>    </select>
+</form>
+            </div>
+        
+        
+            </div>
+
+            </div>
+        <div class="cart-body">
+
+            <div class="header-lined">
+                <h1 class="font-size-36">
+                                            住宅家宽NAT
+                                    </h1>
+                            </div>
+            
+            <div class="sidebar-collapsed">
+
+            <div class="panel card panel-default">
+                <div class="m-0 panel-heading card-header">
+        <h3 class="panel-title">
+                            <i class="fas fa-shopping-cart"></i>&nbsp;
+            
+            分类
+
+                    </h3>
+    </div>
+
+    <div class="panel-body card-body">
+        <form role="form">
+            <select class="form-control custom-select" onchange="selectChangeNavigate(this)">
+                                                    <option menuItemName="静态家宽VPS" value="/store/srv" class="list-group-item" >
+                        静态家宽VPS
+
+                                            </option>
+                                                        <option menuItemName="住宅家宽NAT" value="/store/rbn" class="list-group-item" selected="selected">
+                        住宅家宽NAT
+
+                                            </option>
+                                                                                                    <option menuItemName="住宅家宽定制" value="/store/vip" class="list-group-item" >
+                        住宅家宽定制
+
+                                            </option>
+                                                                </select>
+        </form>
+    </div>
+
+            </div>
+            <div class="panel card panel-default">
+                <div class="m-0 panel-heading card-header">
+        <h3 class="panel-title">
+                            <i class="fas fa-plus"></i>&nbsp;
+            
+            动作
+
+                    </h3>
+    </div>
+
+    <div class="panel-body card-body">
+        <form role="form">
+            <select class="form-control custom-select" onchange="selectChangeNavigate(this)">
+                                                    <option menuItemName="View Cart" value="/cart.php?a=view" class="list-group-item" >
+                        查看购物车
+
+                                            </option>
+                                                                        <option value="" class="list-group-item" selected=""selected>- 查看其他分类 -</option>
+                            </select>
+        </form>
+    </div>
+
+            </div>
+            <div class="panel card panel-default">
+                <div class="m-0 panel-heading card-header">
+        <h3 class="panel-title">
+                            <i class="fas fa-plus"></i>&nbsp;
+            
+            选择货币别
+
+                    </h3>
+    </div>
+
+    <div class="panel-body card-body">
+        <form role="form">
+            <select class="form-control custom-select" onchange="selectChangeNavigate(this)">
+                                                                    <option value="" class="list-group-item" selected=""selected>- 查看其他分类 -</option>
+                            </select>
+        </form>
+    </div>
+
+            </div>
+    
+            <div class="pull-right form-inline float-right">
+            <form method="post" action="/cart.php?gid=3">
+<input type="hidden" name="token" value="0000000000000000000000000000000000000000" />
+                <select name="currency" onchange="submit()" class="form-control">
+                    <option value="">选择货币别</option>
+                                            <option value="1" selected>CNY</option>
+                                            <option value="2">USD</option>
+                                    </select>
+            </form>
+        </div>
+    
+</div>
+
+            <div class="products" id="products">
+                <div class="row row-eq-height">
+                                                                                                                                                                    <div class="col-md-6">
+                        <div class="product clearfix" id="product5">
+
+<header>
+    <span id="product5-name">美国Verizon动态NAT</span>
+            <span class="qty">
+                            已经售罄                     </span>
+    </header>
+
+                            <div class="product-desc">
+                                                                    <p id="product5-description">
+                                        <a href="/link.php?id=3" target="_blank" >点我查看产品细节和详细介绍</a><br />
+<a href="/link.php?id=4" target="_blank" >点我查看详细文档与转发教程</a><br />
+<font color="red"><strong>需要实名认证,作弊封号不退款</strong></font><br />
+----------------------------------------------------<br />
+IP：共享动态 Verizon (每日0点更换)<br />
+T：<strong>47.148.171.153</strong> , <strong>47.148.209.155</strong><br />
+----------------------------------------------------<br />
+CPU：1vCPU (可选配)<br />
+内存：512MB (可选配)<br />
+硬盘：8GB SSD (不可选配)<br />
+带宽：100Mbps (峰值可选配)<br />
+流量：1000GB  (双向不可选配)<br />
+转发：免费端口转发 (10个)<br />
+位置：美国 加州 (普通民宅)<br />
+
+                                    </p>
+                                                                <ul>
+                                                                    </ul>
+                            </div>
+                            <footer>
+                                <div class="product-pricing" id="product5-price">
+                                                                                                                        从开始
+                                            <br />
+                                                                                <span class="price">¥149.00CNY</span>
+                                        <br />
+                                                                                    月缴
+                                                                                <br>
+                                                                                                            </div>
+                                                                <button type="button" class="btn btn-secondary btn-sm btn-order-now disabled" id="product5-order-button" disabled>
+                                    <i class="fas fa-ban"></i>
+                                    已经售罄
+                                </button>
+                                                            </footer>
+                        </div>
+                    </div>
+                                                                                                                                                                                        <div class="col-md-6">
+                        <div class="product clearfix" id="product4">
+
+<header>
+    <span id="product4-name">日本SoftBank动态NAT</span>
+            <span class="qty">
+                             库存充足                     </span>
+    </header>
+
+                            <div class="product-desc">
+                                                                    <p id="product4-description">
+                                        <a href="/link.php?id=3" target="_blank" >点我查看产品细节和详细介绍</a><br />
+<a href="/link.php?id=4" target="_blank" >点我查看详细文档与转发教程</a><br />
+<font color="red"><strong>需要实名认证,作弊封号不退款</strong></font><br />
+----------------------------------------------------<br />
+IP：共享动态 SoftBank (每日0点更换)<br />
+T：<strong>60.157.123.163</strong> , <strong>126.12.105.61</strong><br />
+----------------------------------------------------<br />
+CPU：1vCPU (可选配)<br />
+内存：512MB (可选配)<br />
+硬盘：8GB SSD (不可选配)<br />
+带宽：50Mbps (峰值可选配)<br />
+流量：1000GB (双向不可选配)<br />
+转发：免费端口转发 (10个)<br />
+位置：日本 东京 (普通民宅)<br />
+
+                                    </p>
+                                                                <ul>
+                                                                    </ul>
+                            </div>
+                            <footer>
+                                <div class="product-pricing" id="product4-price">
+                                                                                                                        从开始
+                                            <br />
+                                                                                <span class="price">¥149.00CNY</span>
+                                        <br />
+                                                                                    月缴
+                                                                                <br>
+                                                                                                            </div>
+                                                                <a href="/store/rbn/nat-softbank" class="btn btn-success btn-sm btn-order-now" id="product4-order-button">
+                                    <i class="fas fa-shopping-cart"></i>
+                                    立即购买
+                                </a>
+                                                            </footer>
+                        </div>
+                    </div>
+                                    </div>
+                <div class="row row-eq-height">
+                                                        </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* 库存为0时禁用按钮样式 - 优化版 */
+.btn-order-now.disabled {
+    cursor: not-allowed;
+    opacity: 0.9;
+    background-color: #f8f9fa;
+    border-color: #ced4da;
+    color: #495057;
+    font-weight: 500;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+}
+.btn-order-now.disabled:hover {
+    background-color: #f8f9fa;
+    border-color: #ced4da;
+    color: #495057;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.btn-order-now.disabled i {
+    color: #dc3545; /* 红色图标表示禁止 */
+    margin-right: 5px;
+}
+/* 正常购买按钮样式 */
+.btn-order-now {
+    transition: all 0.2s ease;
+    font-weight: 500;
+}
+.btn-order-now:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+/* 库存状态提示样式 */
+.qty {
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-left: 8px;
+    background-color: #f8f9fa;
+    color: #495057;
+    border: 1px solid #dee2e6;
+    font-weight: 500;
+}
+.qty:empty {
+    display: none;
+}
+/* 库存为0时的特殊样式 */
+.product.out-of-stock {
+    position: relative;
+}
+.product.out-of-stock::before {
+    content: "已售罄";
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background-color: #dc3545;
+    color: white;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+    z-index: 1;
+}
+</style>
+
+<div class="modal fade" id="recommendationsModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="float-left pull-left">
+                                            已加入购物车
+                                    </h4>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+                <div class="clearfix"></div>
+            </div>
+            <div class="modal-body">
+                <div class="product-recommendations-container">
+    <div class="product-recommendations">
+                    <p>基于此产品，我们建议：</p>
+                    </div>
+</div>
+            </div>
+            <div class="modal-footer">
+                <a class="btn btn-primary" href="#" id="btnContinueRecommendationsModal" data-dismiss="modal" role="button">
+                    <span class="w-hidden hidden"><i class="fas fa-spinner fa-spin"></i>&nbsp;</span>继续
+                </a>
+            </div>
+        </div>
+    </div>
+    <div class="product-recommendation clonable w-hidden hidden">
+        <div class="header">
+            <div class="cta">
+                <div class="price">
+                    <span class="w-hidden hidden">免费！</span>
+                    <span class="breakdown-price"></span>
+                    <span class="setup-fee"><small>&nbsp;设定费</small></span>
+                </div>
+                <button type="button" class="btn btn-sm btn-add">
+                    <span class="text">加入购物车</span>
+                    <span class="arrow"><i class="fas fa-chevron-right"></i></span>
+                </button>
+            </div>
+            <div class="expander">
+                <i class="fas fa-chevron-right rotate" data-toggle="tooltip" data-placement="right" title="点击了解更多。"></i>
+            </div>
+            <div class="content">
+                <div class="headline truncate"></div>
+                <div class="tagline truncate">
+                    此产品不提供描述（标语）。
+                </div>
+            </div>
+        </div>
+        <div class="body clearfix"><p></p></div>
+    </div>
+</div>
+
+
+                </div><!-- /.main-content -->
+                            <div class="clearfix"></div>
+        </div>
+    </div>
+</section>
+
+<section id="footer">
+    <div class="container">
+        <a href="#" class="back-to-top"><i class="fas fa-chevron-up"></i></a>
+        <p>版权所有 &copy; 2026 US Residential VPS | AaITR.com</p>
+    </div>
+</section>
+
+<div id="fullpage-overlay" class="hidden">
+    <div class="outer-wrapper">
+        <div class="inner-wrapper">
+            <img src="/assets/img/overlay-spinner.svg">
+            <br>
+            <span class="msg"></span>
+        </div>
+    </div>
+</div>
+
+<div class="modal system-modal fade" id="modalAjax" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content panel-primary">
+            <div class="modal-header panel-heading">
+                <button type="button" class="close" data-dismiss="modal">
+                    <span aria-hidden="true">&times;</span>
+                    <span class="sr-only">关闭</span>
+                </button>
+                <h4 class="modal-title"></h4>
+            </div>
+            <div class="modal-body panel-body">
+                载入中...
+            </div>
+            <div class="modal-footer panel-footer">
+                <div class="pull-left loader">
+                    <i class="fas fa-circle-notch fa-spin"></i>
+                    载入中...
+                </div>
+                <button type="button" class="btn btn-default" data-dismiss="modal">
+                    关闭
+                </button>
+                <button type="button" class="btn btn-primary modal-submit">
+                    发出
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<form action="#" id="frmGeneratePassword" class="form-horizontal">
+    <div class="modal fade" id="modalGeneratePassword">
+        <div class="modal-dialog">
+            <div class="modal-content panel-primary">
+                <div class="modal-header panel-heading">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title">
+                        产生密码
+                    </h4>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger hidden" id="generatePwLengthError">
+                        请输入 8 至 64 之间的数字来做为密码长度
+                    </div>
+                    <div class="form-group">
+                        <label for="generatePwLength" class="col-sm-4 control-label">密码长度</label>
+                        <div class="col-sm-8">
+                            <input type="number" min="8" max="64" value="12" step="1" class="form-control input-inline input-inline-100" id="inputGeneratePasswordLength">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="generatePwOutput" class="col-sm-4 control-label">产生的密码</label>
+                        <div class="col-sm-8">
+                            <input type="text" class="form-control" id="inputGeneratePasswordOutput">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-sm-8 col-sm-offset-4">
+                            <button type="submit" class="btn btn-default btn-sm">
+                                <i class="fas fa-plus fa-fw"></i>
+                                产生新密码
+                            </button>
+                            <button type="button" class="btn btn-default btn-sm copy-to-clipboard" data-clipboard-target="#inputGeneratePasswordOutput">
+                                <img src="/assets/img/clippy.svg" alt="Copy to clipboard" width="15">
+                                复制
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">
+                        关闭
+                    </button>
+                    <button type="button" class="btn btn-primary" id="btnGeneratePasswordInsert" data-clipboard-target="#inputGeneratePasswordOutput">
+                        复制到剪贴簿并插入
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+<style id="atn-style">
+/* 以下数值逐条对照 Bootstrap3（原预订单弹窗靠主题的 Bootstrap）与 js/notice.js 里的 inline 样式，
+   保证与原弹窗渲染完全一致；不依赖主题的 Bootstrap / jQuery */
+.atn-mask{position:fixed;top:0;right:0;bottom:0;left:0;z-index:1050;overflow-y:auto;-webkit-overflow-scrolling:touch;background:rgba(0,0,0,.5);opacity:0;transition:opacity .15s linear}
+.atn-mask.atn-in{opacity:1}
+.atn-mask[hidden]{display:none!important}
+.atn-dialog{position:relative;width:auto;max-width:100%;width:600px;margin:30px auto;transform:translate(0,-25%);transition:transform .3s ease-out}
+.atn-mask.atn-in .atn-dialog{transform:translate(0,0)}
+.atn-content{position:relative;background-color:#fff;border:1px solid rgba(0,0,0,.2);border-radius:6px;box-shadow:0 5px 15px rgba(0,0,0,.5);background-clip:padding-box;outline:0;font-family:inherit;font-size:14px;line-height:1.42857143;color:#333}
+.atn-content *{box-sizing:border-box}
+.atn-head{padding:15px;border-bottom:1px solid #e5e5e5;background:#f0ad4e;border-radius:5px 5px 0 0}
+.atn-title{margin:0;font-weight:400;font-size:18px;line-height:1.42857143;color:#fff}
+/* 标题不得写 font-family:inherit：会盖掉主题给 h1-h6 的标题字体（本主题 = Raleway），
+   字体不同 → 字重观感不同、行内基线不同（图标会差 0.5px） */
+.atn-body{position:relative;padding:15px}
+.atn-body p{margin:0 0 10px}
+/* 同一产品命中多条告知时的步骤栏（告知一 / 告知二） */
+.atn-steps{display:flex;flex-wrap:wrap;align-items:center;margin:0 0 14px;padding-bottom:12px;border-bottom:1px solid #eee}
+.atn-steps[hidden]{display:none!important}
+.atn-step{display:inline-flex;align-items:center;margin:0 6px 0 0;padding:4px 10px;border:1px solid #ddd;border-radius:20px;background:#f7f7f7;color:#777;font-size:12px;line-height:1.6;cursor:pointer;white-space:nowrap}
+.atn-step-no{display:inline-block;min-width:16px;height:16px;margin-right:5px;border-radius:50%;background:#c6c6c6;color:#fff;font-size:11px;line-height:16px;text-align:center;font-style:normal}
+.atn-step-active{border-color:#f0ad4e;background:#fdf3e3;color:#8a6d3b;font-weight:600}
+.atn-step-active .atn-step-no{background:#f0ad4e}
+.atn-step-done{border-color:#5cb85c;background:#eef7ee;color:#3c763d}
+.atn-step-done .atn-step-no{background:#5cb85c}
+.atn-steps-hint{flex:0 0 100%;margin-top:8px;color:#999;font-size:12px}
+.atn-item{position:relative;display:block;margin:10px 0;padding:10px 12px 10px 14px;border-radius:4px}
+.atn-item+.atn-item{margin-top:-5px}
+.atn-item label{display:inline-block;min-height:20px;padding-left:20px;margin-bottom:0;font-weight:400;cursor:pointer}
+.atn-item input[type=checkbox]{position:absolute;margin:4px 0 0 -20px;line-height:normal}
+.atn-hr{margin:12px 0;box-sizing:content-box;height:0;border:0;border-top:1px solid #eee}
+.atn-input{display:block;width:100%;height:34px;padding:6px 12px;font-size:14px;line-height:1.42857143;color:#555;background-color:#fff;background-image:none;border:1px solid #ccc;border-radius:4px;box-shadow:inset 0 1px 1px rgba(0,0,0,.075);transition:border-color ease-in-out .15s,box-shadow ease-in-out .15s}
+.atn-input:focus{border-color:#66afe9;outline:0;box-shadow:inset 0 1px 1px rgba(0,0,0,.075),0 0 8px rgba(102,175,233,.6)}
+.atn-input.atn-bad{border-color:#d9534f}
+.atn-input::-webkit-input-placeholder{color:#999;opacity:1}
+.atn-input::-moz-placeholder{color:#999;opacity:1}
+.atn-input:-ms-input-placeholder{color:#999}
+.atn-input::placeholder{color:#999;opacity:1}
+.atn-foot{padding:15px;text-align:right;border-top:1px solid #e5e5e5}
+.atn-btn{display:inline-block;margin-bottom:0;font-weight:400;text-align:center;vertical-align:middle;cursor:pointer;background-image:none;border:1px solid transparent;white-space:nowrap;padding:6px 12px;font-size:14px;line-height:1.42857143;border-radius:4px;overflow:hidden;-webkit-user-select:none;user-select:none}
+.atn-btn[disabled]{cursor:not-allowed;opacity:.65;box-shadow:none}
+.atn-foot .atn-btn+.atn-btn{margin-left:5px}
+.atn-btn-cancel{color:#333;background-color:#fff;border-color:#ccc}
+.atn-btn-cancel:hover{color:#333;background-color:#e6e6e6;border-color:#adadad}
+.atn-btn-ok{color:#fff;background-color:#f0ad4e;border-color:#eea236}
+.atn-btn-ok:hover:not([disabled]){color:#fff;background-color:#ec971f;border-color:#d58512}
+@media (max-width:767px){
+.atn-dialog{width:auto;margin:10px}
+}
+.atn-preview-bar{position:fixed;top:0;left:0;right:0;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#1f2937;color:#fff;font-size:12px;z-index:99999}
+.atn-preview-bar button{padding:4px 10px;border-radius:5px;border:0;background:#f0ad4e;color:#fff;cursor:pointer;font-size:12px}
+.atn-preview-bar span{opacity:.85}
+</style><script>window.AT_NOTICE={"enabled":true,"ackUrl":"https:\/\/www.aaitr.com\/modules\/addons\/agreeterms\/notice_ack.php","lang":"chinese","acked":[],"notices":{"3":{"remember":false,"content":{"title":"下单前请仔细阅读预定须知","tip":"您要订购的 \u003Cstrong\u003E{product}\u003C\/strong\u003E 属于预定产品","desc":"请逐项阅读并勾选，全部确认后方可继续下单，务必仔细核对","items":[{"id":"i_1","text":"按付款先后顺序交付，\u003Cstrong\u003E大额长周期订单优先\u003C\/strong\u003E","color":"blue"},{"id":"i_0d4be14f","text":"到期时间自实际开通起算，开通时将发送邮件通知","color":"green"},{"id":"i_bde9e5fd","text":"\u003Cstrong\u003E未满15天不支持退款\u003C\/strong\u003E，满15天未交付可无条件原路退款","color":"red"},{"id":"i_b04ca1a8","text":"\u003Cstrong\u003E预订单均无精准交付时间\u003C\/strong\u003E，没有固定批次周期，请确认可以等待","color":"purple"}],"inputs":[{"id":"c_1","phrase":"知晓预定单付款后15天内不支持退款","placeholder":"请手动输入上方文字","hint":"输入内容不正确","mode":"exact"},{"id":"c_ef649836","phrase":"知晓开通有邮件通知，未看邮件损失自负","placeholder":"请手动输入上方文字","hint":"输入内容不正确","mode":"exact"}],"note":"\u003Ci class=\u0022fa fa-lightbulb-o\u0022\u003E\u003C\/i\u003E\u0026nbsp;\u003Cstrong\u003E建议：\u003C\/strong\u003E请及时查看通知邮件并隔几天登录网站查看是否开通，如因未查看邮件导致不知道已经开通而产生的损失需您自行承担，商家不提供退款或任何补偿，建议手机安装邮箱APP方便收到推送通知","confirm":"我已全部知晓，继续下单","cancel":"取消，不下单了"}},"4":{"remember":false,"content":{"title":"下单前请仔细阅读 NAT 使用须知","tip":"本产品\u003Cstrong\u003E仅限所在国本土\u003C\/strong\u003E使用，不保证跨国通讯，\u003Cstrong\u003E特别不保证中国大陆\u003C\/strong\u003E","desc":"本产品技术性较强且不提供技术支持，请逐项确认后再下单","items":[{"id":"i_n1","text":"本产品为\u003Cstrong\u003E共享动态 IP，无独立公网 IP\u003C\/strong\u003E","color":"blue"},{"id":"i_70b587f1","text":"多台共享同一出口 IP，重复购买不退款","color":"red"},{"id":"i_n2","text":"\u003Cstrong\u003E仅限所在国本土\u003C\/strong\u003E，不保证跨国\/中国大陆通讯","color":"green"},{"id":"i_n3","text":"\u003Cstrong\u003E默认无法从外网访问\u003C\/strong\u003E，需自己完成端口转发配置","color":"red"},{"id":"i_n4","text":"提供\u003Cstrong\u003E免费机房端口转发\u003C\/strong\u003E，入口固定，无需频繁换 IP","color":"purple"},{"id":"i_n5","text":"\u003Cstrong\u003E不提供技术支持与使用指导\u003C\/strong\u003E，也不提供任何配置教学","color":"amber"},{"id":"i_n6","text":"下单即视为你已具备技术能力，\u003Cstrong\u003E开通后不因“不会用”退款\u003C\/strong\u003E","color":"gray"}],"inputs":[{"id":"c_n1","phrase":"我知晓本产品不保证中国大陆通讯","placeholder":"请手动输入上方文字","hint":"输入内容不正确","mode":"exact"},{"id":"c_n2","phrase":"我知晓不提供技术支持需自行配置","placeholder":"请手动输入上方文字","hint":"输入内容不正确","mode":"exact"}],"note":"\u003Cstrong\u003E只要上面有一条您看不懂或不确定，就请不要下单。\u003C\/strong\u003E 本产品只交付机器和转发通道，不提供使用教学，也没有技术支持。","confirm":"我已全部知晓，继续下单","cancel":"取消，不下单了"}},"5":{"remember":false,"content":{"title":"库存紧张，请尽快付款","tip":"您要订购的 \u003Cstrong\u003E{product}\u003C\/strong\u003E 当前库存紧张且快速变化中","desc":"库存紧张期间我们按实际付款先后顺序开通，只下单并不会锁定库存","items":[{"id":"i_b368dcec","text":"下单\u003Cstrong\u003E不付款不会锁定库存\u003C\/strong\u003E，抢完即止","color":"amber"},{"id":"i_644f907f","text":"我们按\u003Cstrong\u003E实际付款先后顺序\u003C\/strong\u003E开通，先付先得","color":"blue"},{"id":"i_04726f66","text":"付款慢于其他客户时，库存会被对方\u003Cstrong\u003E抢先占用\u003C\/strong\u003E","color":"red"},{"id":"i_a57e61ae","text":"没抢到的订单将\u003Cstrong\u003E自动转为预定单\u003C\/strong\u003E，等待补货后开通","color":"purple"},{"id":"i_3157bd49","text":"预定单\u003Cstrong\u003E不支持随时退款\u003C\/strong\u003E，等够15天仍未交付才能申请退款","color":"amber"},{"id":"i_94641782","text":"\u003Cstrong\u003E不能接受「付款慢了被他人抢先转预定单」的情况请勿下单\u003C\/strong\u003E","color":"gray"}],"inputs":[{"id":"c_d21d87d7","phrase":"我知晓先付款的客户才能先开通","placeholder":"请手动输入上方文字","hint":"输入内容不正确","mode":"exact"},{"id":"c_5ee8a373","phrase":"我知晓付款慢了库存会被他人抢先","placeholder":"请手动输入上方文字","hint":"输入内容不正确","mode":"exact"}],"note":"如果您无法接受「付款慢了被其他客户抢先、订单自动转为预定单」的情况，请不要下单。","confirm":"知晓风险，下单就付款","cancel":"取消，不下单了"}},"6":{"remember":false,"content":{"title":"下单前请仔细阅读 AT\u0026T 入站须知","tip":"您要订购的 \u003Cstrong\u003E{product}\u003C\/strong\u003E 入站连接受限且无法改善","desc":"以下为 AT\u0026T 线路的客观限制，非我方能够改善，请逐项确认后再下单","items":[{"id":"i_434fbbcf","text":"同光猫下公网 IP 共用限制，整体连接过高或过频时可能丢包","color":"blue"},{"id":"i_bf8b5744","text":"严重时入站可能中断，但虚拟机主动发起的出站连接不受影响","color":"red"},{"id":"i_e89bc367","text":"该限制由运营商决定，我方无法通过服务器或网络配置改善","color":"gray"},{"id":"i_b456b127","text":"我们仅保障正常出站，不保障公网 IP 的入站可达性及稳定性","color":"amber"},{"id":"i_2cfcef03","text":"我们提供\u003Ca href=\u0022https:\/\/www.aaitr.com\/index.php?m=aaitr_link\u0022 target=\u0022_blank\u0022\u003E出站隧道方案\u003C\/a\u003E替代入站，可视化配置，需自备中转机","color":"green"},{"id":"i_13250f90","text":"不使用我们的方案也可自行配置出站隧道，但不提供技术支持","color":"gray"}],"inputs":[{"id":"c_d393538c","phrase":"我已充分知晓入站限制且确认接受该限制","placeholder":"请手动输入上方文字","hint":"输入内容不正确","mode":"exact"},{"id":"c_ea0a0888","phrase":"我已充分理解隧道出站原理且不需要技术支持","placeholder":"请手动输入上方文字","hint":"输入内容不正确","mode":"exact"}],"note":"建议先点开上面的「出站隧道方案」了解原理，确认可以接受后再下单。","confirm":"我已全部知晓，继续下单","cancel":"取消，不下单了"}}},"products":{"4":["4"],"5":["4"],"10":["6","3"],"11":["3"],"9":["6","5"],"12":["5"],"6":["5"]},"names":{"4":"日本SoftBank动态NAT","5":"美国Verizon动态NAT","10":"美国AT\u0026T静态家宽","11":"美国Verizon静态家宽","9":"美国AT\u0026T静态家宽","12":"日本KDDI静态家宽","6":"美国Verizon静态家宽"},"pagePid":0,"stocks":[],"ui":{"typeLabel":"在下方输入框中手动输入：","nextLabel":"下一步","stepLabel":"第 {n} 条","stepsHint":"该产品需要确认 {n} 条告知，逐条确认完成后才会进入下单。","confirmDefault":"我已全部知晓，继续下单","cancelDefault":"取消，不下单了","stockUnknown":"少量"}};</script><script src="https://www.aaitr.com/modules/addons/agreeterms/js/notice.js?v=1794110906"></script>
+<script>
+$(document).ready(function() {
+    var injectProducts = [9,6];
+    var preorderLink = "https:\/\/www.aaitr.com\/store\/pr";
+    var preorderBtnText = "提前预定";
+    // 过滤空字符串，避免 indexOf('') 恒为真导致误判为售罄
+    var soldOutKeywords = ["已经售罄", "Sold Out", "名额已满"].filter(function(kw) { return kw; });
+    $('.product').each(function() {
+        var productDiv = $(this);
+        var productIdStr = productDiv.attr('id');
+        if (productIdStr && productIdStr.startsWith('product')) {
+            var productId = parseInt(productIdStr.replace('product', ''));
+            if (injectProducts.indexOf(productId) !== -1) {
+                var orderButton = productDiv.find('.btn-order-now');
+                var buttonText = orderButton.text().trim();
+                var isSoldOut = orderButton.hasClass('disabled') && soldOutKeywords.some(function(kw) { return buttonText.indexOf(kw) !== -1; });
+                if (isSoldOut) {
+                    var preorderButton = '<a href="' + preorderLink + '" data-preorder="1" class="btn btn-success btn-sm btn-order-now w-100" id="product' + productId + '-preorder-button" style="margin-top: 10px;"><i class="fas fa-shopping-cart" style="margin-right: 3px;"></i> ' + preorderBtnText + '</a>';
+                    productDiv.find('footer').append(preorderButton);
+                }
+            }
+        }
+    });
+});
+</script>
+<script>
+(function ($) {
+    var preorderProductIds = [10,11];
+    var ackBtnBuy = "立即预定";
+    var ackBtnBuyOrig = "立即购买";
+
+    $(function () {
+        $('a[id$="-order-button"]').each(function () {
+            var elId = $(this).attr('id') || '';
+            var m = elId.match(/^product(\d+)-order-button$/);
+            if (!m) return;
+            var pid = parseInt(m[1], 10);
+            if (preorderProductIds.indexOf(pid) === -1) return;
+            // 将按钮文字替换为预定文字（直接用 replace 字符串替换，避免正则陷阱）
+            var html = $(this).html();
+            var idx = html.indexOf(ackBtnBuyOrig);
+            if (idx !== -1) {
+                $(this).html(html.substring(0, idx) + ackBtnBuy + html.substring(idx + ackBtnBuyOrig.length));
+            }
+        });
+    });
+})(jQuery);
+</script>
+
+
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a5f991f70b05e3a8',t:'MTc5NTUzNTQzNQ=='};var l=window.parent.location,o;try{o=new URL(l.origin).origin}catch(e){try{o=new URL(new URL(l.href).origin).origin}catch(e){o=''}}var u='/cdn-cgi/challenge-platform/scripts/jsd/main.js?ray=a5f991f70b05e3a8',a=document.createElement('script');a.src=o?new URL(u,o).href:u;document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>

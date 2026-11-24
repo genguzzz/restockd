@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 账号页：按站点分组展示托管账号，支持粘贴 Cookie、会话校验、编辑默认下单参数与新建
+// 账号页：按站点分组展示托管账号，支持账号密码托管（自动登录）、粘贴 Cookie、会话校验、编辑默认下单参数与新建
 import { computed, onMounted, ref } from 'vue'
 import {
   NAlert,
@@ -16,6 +16,7 @@ import {
   NSelect,
   NSpace,
   NSpin,
+  NSwitch,
   NTag,
   NText,
   useMessage,
@@ -55,6 +56,7 @@ const act = useAction()
 const accounts = ref<Account[]>([])
 const sites = ref<Site[]>([])
 const checking = ref<string | null>(null)
+const loggingIn = ref<string | null>(null)
 
 const { loading, run } = useAsync(async () => {
   const [accountList, siteList] = await Promise.all([accountsApi.list(), sitesApi.list()])
@@ -108,6 +110,21 @@ const checkAccount = async (account: Account) => {
   else message.warning(`会话${label}${updated.last_error ? `：${updated.last_error}` : ''}`)
 }
 
+// 用托管的账号密码立即登录（会话失效时引擎也会自动登录）
+const loginAccount = async (account: Account) => {
+  loggingIn.value = account.id
+  const updated = await act(() => accountsApi.login(account.id))
+  loggingIn.value = null
+  if (updated) {
+    upsertAccount(updated)
+    message.success(`登录成功${updated.identity ? `：${updated.identity}` : ''}`)
+    return
+  }
+  // 失败时服务端已更新账号状态，刷新一下拿到错误原因
+  const latest = await accountsApi.list().catch(() => null)
+  if (latest) accounts.value = latest
+}
+
 const removeAccount = async (account: Account) => {
   const result = await act(() => accountsApi.remove(account.id), '已删除')
   if (result) accounts.value = accounts.value.filter((item) => item.id !== account.id)
@@ -142,6 +159,10 @@ interface AccountForm {
   user_agent: string
   defaults: Required<OrderDefaults>
   cookies_raw: string
+  username: string
+  password: string
+  hasPassword: boolean
+  clearPassword: boolean
 }
 
 const emptyForm = (): AccountForm => ({
@@ -150,6 +171,10 @@ const emptyForm = (): AccountForm => ({
   user_agent: '',
   defaults: { gateway: '', os: '', hostname: '', ssh_key: '' },
   cookies_raw: '',
+  username: '',
+  password: '',
+  hasPassword: false,
+  clearPassword: false,
 })
 
 const drawerVisible = ref(false)
@@ -176,6 +201,10 @@ const openEdit = (account: Account) => {
       ssh_key: account.defaults?.ssh_key ?? '',
     },
     cookies_raw: '',
+    username: account.username ?? '',
+    password: '',
+    hasPassword: account.has_password,
+    clearPassword: false,
   }
   drawerVisible.value = true
 }
@@ -199,7 +228,11 @@ const submit = async () => {
     label: current.label.trim(),
     user_agent: current.user_agent.trim(),
     defaults: { ...current.defaults },
+    username: current.username.trim(),
   }
+  // 密码：输入了就更新；勾选清除则清空；否则不传（保留已保存的密码）
+  if (current.password) input.password = current.password
+  else if (current.clearPassword) input.password = ''
   const id = editingId.value
   if (!id && current.cookies_raw.trim()) input.cookies_raw = current.cookies_raw.trim()
   saving.value = true
@@ -229,8 +262,8 @@ onMounted(() => {
     </PageHeader>
 
     <n-alert type="info" :show-icon="false" class="notice">
-      Cookie 只保存在本服务器，不会回传到浏览器。<code>cf_clearance</code> 与 UA 和出口 IP 绑定：Cloudflare 站点优先使用 FlareSolverr，
-      或粘贴从与本服务器相同出口 IP 获取的 Cookie。
+      推荐托管账号密码：会话失效时自动登录（验证码走「设置 → 验证码」里的求解服务），无需手动续 Cookie。
+      密码与 Cookie 只保存在本服务器，不会回传到浏览器。<code>cf_clearance</code> 与 UA 和出口 IP 绑定：Cloudflare 站点优先使用 FlareSolverr。
     </n-alert>
 
     <n-spin :show="loading && accounts.length === 0">
@@ -247,6 +280,16 @@ onMounted(() => {
                 <n-text v-if="account.identity" depth="2" class="identity">{{ account.identity }}</n-text>
               </div>
               <div class="fields">
+                <div class="field">
+                  <n-text depth="3">登录</n-text>
+                  <n-space :size="6" align="center">
+                    <n-text v-if="account.username" class="identity">{{ account.username }}</n-text>
+                    <n-tag v-if="account.credentials_rejected" size="tiny" type="error" :bordered="false">密码被拒·已暂停自动登录</n-tag>
+                    <n-tag v-else-if="account.has_password" size="tiny" type="success" :bordered="false">已托管密码</n-tag>
+                    <n-text v-else depth="3">未托管密码</n-text>
+                    <n-text v-if="account.login_at" depth="3">· <TimeAgo :value="account.login_at" /></n-text>
+                  </n-space>
+                </div>
                 <div class="field">
                   <n-text depth="3">余额</n-text>
                   <MoneyText :money="account.balance" />
@@ -273,6 +316,7 @@ onMounted(() => {
                 </div>
               </div>
               <n-space :size="8" class="actions">
+                <n-button v-if="account.has_password" size="small" :loading="loggingIn === account.id" @click="loginAccount(account)">登录</n-button>
                 <n-button size="small" @click="openCookies(account)">粘贴 Cookie</n-button>
                 <n-button size="small" :loading="checking === account.id" @click="checkAccount(account)">校验</n-button>
                 <n-button size="small" @click="openEdit(account)">编辑</n-button>
@@ -300,6 +344,25 @@ onMounted(() => {
           </n-form-item>
           <n-form-item label="备注名" required>
             <n-input v-model:value="form.label" placeholder="例如 主号" />
+          </n-form-item>
+          <n-text depth="3" class="section">登录凭据（托管后会话失效自动登录）</n-text>
+          <div class="row-2">
+            <n-form-item label="用户名 / 邮箱">
+              <n-input v-model:value="form.username" placeholder="me@example.com" :input-props="{ autocomplete: 'off' }" />
+            </n-form-item>
+            <n-form-item label="密码">
+              <n-input
+                v-model:value="form.password"
+                type="password"
+                show-password-on="click"
+                :disabled="form.clearPassword"
+                :placeholder="form.hasPassword ? '已保存（留空不修改）' : '可选'"
+                :input-props="{ autocomplete: 'new-password' }"
+              />
+            </n-form-item>
+          </div>
+          <n-form-item v-if="form.hasPassword" label="清除已保存的密码" label-placement="left">
+            <n-switch v-model:value="form.clearPassword" />
           </n-form-item>
           <n-form-item label="User-Agent" feedback="使用 cf_clearance 时必须与获取 Cookie 的浏览器一致">
             <n-input v-model:value="form.user_agent" placeholder="留空使用默认 UA">

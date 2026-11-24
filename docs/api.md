@@ -117,8 +117,14 @@
 - `POST /api/accounts/{id}/cookies` 请求 `{"raw":"<粘贴内容>","user_agent":"可选，cf_clearance 必须配同一 UA"}`
   支持 `a=1; b=2`、`Cookie: ...`、Cookie-Editor JSON 数组、Netscape cookies.txt。响应 `{"ok":true,"cookie_names":[...]}`。
 - `POST /api/accounts/{id}/check` 校验会话 → 返回更新后的 `Account`。
+- `POST /api/accounts/{id}/login` 用托管凭据立即登录 → 更新后的 `Account`；登录失败返回 502 与原因（账号状态同步置为 `expired`）。
 
-新建请求体：`{"site_id":"usvps24","label":"主号","user_agent":"","defaults":{...},"cookies_raw":"可选"}`。
+**账号密码托管**：新建 / 更新请求体可带 `"username"` 与 `"password"`（`username` 省略不修改；`password` 省略或 `"******"` 不修改，空串清除）。
+响应只回 `"username"`、`"has_password"`、`"login_at"`，密码永不回传。站点类型声明 `capabilities.login` 时，
+会话失效由引擎自动登录并重试一次（下单 / 报价 / 校验在尚无 Cookie 时先登录；轮询公开库存不预先登录）；验证码走设置里的 Solver 链。
+站点拒绝密码时推送 `account` 事件并置 `credentials_rejected`，暂停自动登录直到修改凭据或手动调用 `/login`；修改用户名会丢弃旧 Cookie。
+
+新建请求体：`{"site_id":"usvps24","label":"主号","user_agent":"","defaults":{...},"cookies_raw":"可选","username":"可选","password":"可选"}`。
 
 ## Watch（关注 / 自动锁单规则）
 
@@ -178,7 +184,7 @@
 ```json
 {"id": 42, "type": "restock", "site_id": "novixlink", "product_id": "41", "title": "LAS-COX Lite 补货 (3 台)", "detail": "", "created_at": "2026-11-24T07:30:00Z"}
 ```
-`type`：`restock|sold_out|price_change|new_product|order|challenge|poll_error`。
+`type`：`restock|sold_out|price_change|new_product|order|challenge|poll_error|account`（`account`：会话失效无法自动恢复、自动登录被拒）。
 
 ### 实时推送（SSE）
 
@@ -212,11 +218,14 @@
 {
   "telegram": {"enabled": true, "bot_token": "******", "chat_id": "123456", "api_base": ""},
   "email": {"enabled": false, "host": "smtp.gmail.com", "port": 587, "username": "", "password": "******", "from": "", "to": "", "starttls": true},
+  "bark": {"enabled": true, "device_urls": "******", "group": "restockd", "sound": "", "icon": ""},
   "solver": {"flaresolverr_url": "http://127.0.0.1:8191", "external_url": "", "external_token": "******", "manual_timeout_sec": 300},
   "notify_events": ["restock", "order", "challenge"]
 }
 ```
-- `POST /api/settings/test-notify` → `{"ok":true,"results":{"telegram":"ok","email":"disabled"}}`
+- `bark.device_urls`：Bark 设备地址 `https://<server>/<device key>`，逗号 / 换行分隔多台；属于密钥，读取时回传 `"******"`。
+  补货 / 锁单 / 人工验证以 `timeSensitive` 级别推送，其余事件为 `active`。
+- `POST /api/settings/test-notify` → `{"ok":true,"results":{"telegram":"ok","email":"disabled","bark":"ok"}}`
 
 ## Stats（首页）
 

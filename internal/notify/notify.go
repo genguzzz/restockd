@@ -1,4 +1,4 @@
-// Package notify 通知抽象：Telegram 与 SMTP 邮件，统一由 Hub 按设置分发。
+// Package notify 通知抽象：Telegram、SMTP 邮件与 Bark（iOS 推送），统一由 Hub 按设置分发。
 package notify
 
 import (
@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/smtp"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,6 +55,124 @@ type EmailConfig struct {
 	From     string `json:"from"`
 	To       string `json:"to"`
 	StartTLS bool   `json:"starttls"`
+}
+
+// BarkConfig Bark（https://github.com/Finb/bark-server）iOS 推送配置。
+// DeviceURLs 为设备地址 https://<server>/<device key>，多个用逗号或换行分隔；含设备 key，属于密钥。
+type BarkConfig struct {
+	Enabled    bool   `json:"enabled"`
+	DeviceURLs string `json:"device_urls"`
+	// Group 通知分组（iOS 通知中心按组折叠），默认 restockd。
+	Group string `json:"group"`
+	// Sound 铃声名（Bark App 内置铃声），空为系统默认。
+	Sound string `json:"sound"`
+	// Icon 通知图标 URL（iOS 15+），可空。
+	Icon string `json:"icon"`
+}
+
+// Targets 解析设备地址列表，忽略非 http(s) 项。
+func (c BarkConfig) Targets() []string {
+	var targets []string
+	for _, item := range strings.FieldsFunc(c.DeviceURLs, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' || r == ' ' }) {
+		item = strings.TrimRight(strings.TrimSpace(item), "/")
+		if strings.HasPrefix(item, "https://") || strings.HasPrefix(item, "http://") {
+			targets = append(targets, item)
+		}
+	}
+	return targets
+}
+
+// barkTimeSensitive 需要立即处理的事件用 timeSensitive（可突破专注模式），其余为普通推送。
+var barkTimeSensitive = map[string]bool{"restock": true, "order": true, "challenge": true, "account": true}
+
+// Bark iOS 推送（也会同步到配对的 Apple Watch）。
+type Bark struct {
+	Config BarkConfig
+	Client *http.Client
+}
+
+type barkPayload struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+	Group string `json:"group,omitempty"`
+	URL   string `json:"url,omitempty"`
+	Level string `json:"level,omitempty"`
+	Sound string `json:"sound,omitempty"`
+	Icon  string `json:"icon,omitempty"`
+}
+
+// Name 实现 Notifier。
+func (b *Bark) Name() string { return "bark" }
+
+// Send 实现 Notifier：向每个设备 POST JSON，任一失败返回错误（错误里隐去设备 key）。
+func (b *Bark) Send(ctx context.Context, message Message) error {
+	targets := b.Config.Targets()
+	if len(targets) == 0 {
+		return errors.New("bark: no device url")
+	}
+	payload := barkPayload{Title: message.Title, Body: message.Body, Group: b.Config.Group, URL: message.URL, Level: "active", Sound: b.Config.Sound, Icon: b.Config.Icon}
+	if payload.Group == "" {
+		payload.Group = "restockd"
+	}
+	if payload.Body == "" {
+		payload.Body = message.Title
+	}
+	if barkTimeSensitive[message.Event] {
+		payload.Level = "timeSensitive"
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	client := b.Client
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	var failures []string
+	for _, target := range targets {
+		if err := barkSend(ctx, client, target, raw); err != nil {
+			failures = append(failures, err.Error())
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("bark: %s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+func barkSend(ctx context.Context, client *http.Client, target string, raw []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
+	if err != nil {
+		return redactBark(err, target)
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	resp, err := client.Do(req)
+	if err != nil {
+		return redactBark(err, target)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	var result struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil || resp.StatusCode != http.StatusOK || result.Code != http.StatusOK {
+		return fmt.Errorf("%s: http %d %s", maskBarkURL(target), resp.StatusCode, strings.TrimSpace(result.Message))
+	}
+	return nil
+}
+
+// maskBarkURL 只保留协议与主机：https://bark.example.com/…（路径里的设备 key 及其后的段一律隐去）。
+func maskBarkURL(target string) string {
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Host == "" {
+		return "bark"
+	}
+	return parsed.Scheme + "://" + parsed.Host + "/…"
+}
+
+func redactBark(err error, target string) error {
+	return errors.New(strings.ReplaceAll(err.Error(), target, maskBarkURL(target)))
 }
 
 // Telegram Bot 通知。
@@ -213,6 +332,7 @@ func BuildMIME(from string, to []string, message Message) []byte {
 type Settings struct {
 	Telegram TelegramConfig
 	Email    EmailConfig
+	Bark     BarkConfig
 	Events   []string
 }
 
@@ -236,6 +356,9 @@ func (h *Hub) Apply(settings Settings) {
 	}
 	if settings.Email.Enabled {
 		notifiers = append(notifiers, &Email{Config: settings.Email})
+	}
+	if settings.Bark.Enabled && len(settings.Bark.Targets()) > 0 {
+		notifiers = append(notifiers, &Bark{Config: settings.Bark})
 	}
 	events := map[string]bool{}
 	for _, event := range settings.Events {

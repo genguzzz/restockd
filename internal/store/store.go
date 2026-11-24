@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -52,6 +53,11 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	// v2：账号凭据列（旧库补列，已存在时忽略）。
+	if _, err := db.Exec(`ALTER TABLE accounts ADD COLUMN secrets TEXT NOT NULL DEFAULT '{}'`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("migrate secrets: %w", err)
 	}
 	_ = os.Chmod(path, 0o600)
 	return &Store{db: db}, nil
@@ -130,22 +136,26 @@ func (s *Store) SaveAccount(ctx context.Context, account domain.Account) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO accounts(id, site_id, data, cookies) VALUES(?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET site_id=excluded.site_id, data=excluded.data, cookies=excluded.cookies`, account.ID, account.SiteID, data, cookies)
+	secrets, err := marshal(account.Credentials)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO accounts(id, site_id, data, cookies, secrets) VALUES(?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET site_id=excluded.site_id, data=excluded.data, cookies=excluded.cookies, secrets=excluded.secrets`, account.ID, account.SiteID, data, cookies, secrets)
 	return err
 }
 
 // GetAccount 按 ID 读取（含 Cookie）。
 func (s *Store) GetAccount(ctx context.Context, id string) (domain.Account, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT data, cookies FROM accounts WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT data, cookies, secrets FROM accounts WHERE id=?`, id)
 	return scanAccount(row)
 }
 
 // ListAccounts siteID 为空时返回全部。
 func (s *Store) ListAccounts(ctx context.Context, siteID string) ([]domain.Account, error) {
-	query := `SELECT data, cookies FROM accounts ORDER BY id`
+	query := `SELECT data, cookies, secrets FROM accounts ORDER BY id`
 	args := []any{}
 	if siteID != "" {
-		query = `SELECT data, cookies FROM accounts WHERE site_id=? ORDER BY id`
+		query = `SELECT data, cookies, secrets FROM accounts WHERE site_id=? ORDER BY id`
 		args = append(args, siteID)
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -167,8 +177,8 @@ func (s *Store) ListAccounts(ctx context.Context, siteID string) ([]domain.Accou
 type scanner interface{ Scan(dest ...any) error }
 
 func scanAccount(row scanner) (domain.Account, error) {
-	var data, cookies string
-	if err := row.Scan(&data, &cookies); err != nil {
+	var data, cookies, secrets string
+	if err := row.Scan(&data, &cookies, &secrets); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Account{}, ErrNotFound
 		}
@@ -185,6 +195,10 @@ func scanAccount(row scanner) (domain.Account, error) {
 	for _, record := range records {
 		account.Cookies = append(account.Cookies, &http.Cookie{Name: record.Name, Value: record.Value, Path: record.Path, Expires: record.Expires, HttpOnly: record.HTTPOnly, Secure: record.Secure})
 	}
+	if err := json.Unmarshal([]byte(secrets), &account.Credentials); err != nil {
+		return domain.Account{}, err
+	}
+	account.SyncCookieNames()
 	return account, nil
 }
 

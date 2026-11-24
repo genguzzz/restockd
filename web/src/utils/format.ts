@@ -53,6 +53,7 @@ export const eventLabels: Record<EventType, string> = {
   order: '锁单',
   challenge: '人工验证',
   poll_error: '轮询失败',
+  account: '账号异常',
 }
 
 export function formatSize(mb: number): string {

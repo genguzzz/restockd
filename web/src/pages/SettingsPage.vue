@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 设置页：通知渠道（Telegram / SMTP）、验证码求解与通知事件；密码类字段 "******" 表示已设置且不修改
+// 设置页：通知渠道（Telegram / SMTP / Bark）、验证码求解与通知事件；密码类字段 "******" 表示已设置且不修改
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import {
@@ -26,21 +26,22 @@ import PageHeader from '@/components/PageHeader.vue'
 
 const SECRET_MASK = '******'
 const SECRET_PLACEHOLDER = '已设置（留空不修改）'
-const notifyEventOrder: EventType[] = ['restock', 'order', 'challenge', 'price_change', 'new_product', 'sold_out', 'poll_error']
+const notifyEventOrder: EventType[] = ['restock', 'order', 'challenge', 'account', 'price_change', 'new_product', 'sold_out', 'poll_error']
 const notifyOptions: { value: EventType; label: string }[] = notifyEventOrder.map((item) => ({ value: item, label: eventLabels[item] }))
 
 // 密码类字段的表单值：已设置时输入框留空，提交时空值回传掩码
 interface SecretInputs {
   botToken: string
   emailPassword: string
+  barkURLs: string
   externalToken: string
 }
 
 const act = useAction()
 const loaded = ref(false)
 const form = ref<Settings>(emptySettings())
-const secrets = ref<SecretInputs>({ botToken: '', emailPassword: '', externalToken: '' })
-const masked = ref<Record<keyof SecretInputs, boolean>>({ botToken: false, emailPassword: false, externalToken: false })
+const secrets = ref<SecretInputs>({ botToken: '', emailPassword: '', barkURLs: '', externalToken: '' })
+const masked = ref<Record<keyof SecretInputs, boolean>>({ botToken: false, emailPassword: false, barkURLs: false, externalToken: false })
 const savedSnapshot = ref('')
 const saving = ref(false)
 const testing = ref(false)
@@ -50,6 +51,7 @@ function emptySettings(): Settings {
   return {
     telegram: { enabled: false, bot_token: '', chat_id: '', api_base: '' },
     email: { enabled: false, host: '', port: 587, username: '', password: '', from: '', to: '', starttls: true },
+    bark: { enabled: false, device_urls: '', group: '', sound: '', icon: '' },
     solver: { flaresolverr_url: '', external_url: '', external_token: '', manual_timeout_sec: 300 },
     notify_events: [],
   }
@@ -60,11 +62,13 @@ const applySettings = (settings: Settings) => {
   masked.value = {
     botToken: settings.telegram.bot_token === SECRET_MASK,
     emailPassword: settings.email.password === SECRET_MASK,
+    barkURLs: settings.bark.device_urls === SECRET_MASK,
     externalToken: settings.solver.external_token === SECRET_MASK,
   }
   secrets.value = {
     botToken: masked.value.botToken ? '' : settings.telegram.bot_token,
     emailPassword: masked.value.emailPassword ? '' : settings.email.password,
+    barkURLs: masked.value.barkURLs ? '' : settings.bark.device_urls,
     externalToken: masked.value.externalToken ? '' : settings.solver.external_token,
   }
   form.value = JSON.parse(JSON.stringify(settings)) as Settings
@@ -89,6 +93,7 @@ const buildPayload = (current: Settings): Settings => ({
   ...current,
   telegram: { ...current.telegram, bot_token: secretValue('botToken') },
   email: { ...current.email, password: secretValue('emailPassword') },
+  bark: { ...current.bark, device_urls: secretValue('barkURLs') },
   solver: { ...current.solver, external_token: secretValue('externalToken') },
   notify_events: [...current.notify_events],
 })
@@ -120,7 +125,7 @@ const resultType = (value: string): 'success' | 'default' | 'error' => {
   if (value === 'disabled' || value === '') return 'default'
   return 'error'
 }
-const channelLabels: Record<string, string> = { telegram: 'Telegram', email: '邮件' }
+const channelLabels: Record<string, string> = { telegram: 'Telegram', email: '邮件', bark: 'Bark' }
 const channelLabel = (channel: string): string => channelLabels[channel] ?? channel
 const resultText = (value: string): string => (value === 'ok' ? '成功' : value === 'disabled' ? '未启用' : value)
 
@@ -219,6 +224,33 @@ onMounted(() => {
             </n-form-item>
             <n-form-item label="收件人" feedback="多个用逗号分隔">
               <n-input v-model:value="form.email.to" placeholder="a@example.com, b@example.com" />
+            </n-form-item>
+          </n-form>
+        </n-card>
+
+        <n-card title="Bark（iOS 推送）" size="small">
+          <template #header-extra>
+            <n-switch v-model:value="form.bark.enabled" />
+          </template>
+          <n-form label-placement="top" size="small">
+            <n-form-item label="设备地址" feedback="Bark App 里复制的 https://<服务器>/<设备 Key>，多台设备用逗号或换行分隔">
+              <n-input
+                v-model:value="secrets.barkURLs"
+                type="textarea"
+                :autosize="{ minRows: 1, maxRows: 4 }"
+                :placeholder="secretPlaceholder('barkURLs', 'https://bark.example.com/xxxxxxxx')"
+              />
+            </n-form-item>
+            <div class="row-2">
+              <n-form-item label="分组">
+                <n-input v-model:value="form.bark.group" placeholder="restockd" />
+              </n-form-item>
+              <n-form-item label="铃声">
+                <n-input v-model:value="form.bark.sound" placeholder="默认" />
+              </n-form-item>
+            </div>
+            <n-form-item label="图标 URL（可选）" feedback="补货 / 锁单 / 人工验证为「时效性」通知，可突破专注模式">
+              <n-input v-model:value="form.bark.icon" placeholder="https://example.com/icon.png" />
             </n-form-item>
           </n-form>
         </n-card>

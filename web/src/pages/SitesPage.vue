@@ -43,6 +43,7 @@ const capabilityLabels: Record<keyof ProviderMeta['capabilities'], string> = {
   coupon: '优惠码',
   order: '自动下单',
   session_check: '会话校验',
+  login: '账号密码登录',
   stock_needs_login: '库存需登录',
 }
 

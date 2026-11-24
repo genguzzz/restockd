@@ -4,8 +4,8 @@
 
 - 多站点监控：商品列表、规格、各周期价格、配置项、库存（数量）
 - 关注规则：指定周期 / 配置 / 系统 / 优惠码 / 支付方式 / 价格上限 / 锁单次数
-- 自动锁单：有货即用托管账号下单，生成**未支付**账单（不会自动付款），Telegram / 邮件通知付款链接
-- 账号托管：粘贴 Cookie（请求头 / Cookie-Editor JSON / cookies.txt），会话滚动刷新自动回写，失效提醒
+- 自动锁单：有货即用托管账号下单，生成**未支付**账单（不会自动付款），Telegram / 邮件 / Bark（iOS 推送）通知付款链接
+- 账号托管：账号密码自动登录（会话失效自动重登，验证码走 Solver 链），或粘贴 Cookie（请求头 / Cookie-Editor JSON / cookies.txt）；会话滚动刷新自动回写，失效提醒
 - 验证码：统一 Solver 链 —— 外部 HTTP 求解服务 → FlareSolverr（Cloudflare）→ 人工收件箱（界面粘贴 token / Cookie）
 - 实时：SSE 推送事件、站点状态、订单、待处理验证
 
@@ -21,7 +21,7 @@ internal/provider       Provider 接口与注册表
 internal/fetch          抓取抽象：直连 / FlareSolverr / Hybrid（先直连，遇质询回落），Cookie 解析
 internal/solver         验证码 Solver 接口：Chain、External、FlareSolverr、ManualBroker
 internal/engine         每站点调度协程、快照 diff、关注匹配、锁单执行、通知、事件总线
-internal/notify         Telegram / SMTP，Hub 按事件类型过滤分发
+internal/notify         Telegram / SMTP / Bark，Hub 按事件类型过滤分发
 internal/store          SQLite（WAL），JSON 文档存储
 internal/api            REST + SSE + 内嵌静态资源（契约见 docs/api.md）
 web/                    Vue 3 + naive-ui 前端
@@ -32,8 +32,9 @@ web/                    Vue 3 + naive-ui 前端
 1. 新建 `internal/provider/<name>/`，实现 `provider.Provider`：
    - `Meta()`：Kind、能力声明、最短 / 默认轮询间隔、默认抓取方式、配置字段（前端据此自动生成表单）、可能出现的验证码类型
    - `Catalog(ctx, env)`：返回 `domain.Catalog`（商品、价格、库存、配置项）
-2. 可选实现 `provider.Orderer`（`Quote` 算价 / 校验优惠码、`PlaceOrder` 锁单，`spec.DryRun` 时停在提交前）
-   与 `provider.SessionChecker`（校验 Cookie 是否有效）。
+2. 可选实现 `provider.Orderer`（`Quote` 算价 / 校验优惠码、`PlaceOrder` 锁单，`spec.DryRun` 时停在提交前）、
+   `provider.SessionChecker`（校验 Cookie 是否有效）与 `provider.Authenticator`（用托管账号密码登录，Cookie 留在
+   `env.Session`；会话失效时引擎自动调用并重试，实现方只需在失效时返回 `provider.ErrSessionExpired`）。
 3. 在 `init()` 中 `provider.Register(meta, factory)`，并在 `cmd/restockd/main.go` 里空导入。
 4. 所有网络请求经 `env.Client.Do(ctx, env.Session, req)`；遇到验证码构造 `solver.Challenge` 交给 `env.Solver`。
    使用 WHMCS 的商家无需写代码，在「站点」页选 `whmcs` 填商品组即可。

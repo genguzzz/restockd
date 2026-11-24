@@ -2,6 +2,7 @@ package whmcs
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/genguzzz/restockd/internal/domain"
@@ -93,5 +94,39 @@ func TestGroupURL(t *testing.T) {
 	}
 	if got := provider.GroupURL("12"); got != "https://novixlink.com/cart.php?gid=12" {
 		t.Fatalf("numeric group url: %s", got)
+	}
+}
+
+// AaITR：standard_cart + 自定义「库存充足 / 已经售罄」标签，规格为「标签：数值」中文写法。
+func TestParseGroupStandardCartChinese(t *testing.T) {
+	body, err := os.ReadFile("../../../testdata/whmcs/aaitr_store_rbn.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, _ := New(domain.Site{ID: "aaitr", BaseURL: "https://www.aaitr.com", Config: map[string]string{"groups": "rbn", "currency": "CNY"}})
+	products, err := instance.(*Provider).ParseGroup(body, "rbn", "https://www.aaitr.com/store/rbn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]domain.Product{}
+	for _, product := range products {
+		byName[product.Name] = product
+	}
+	verizon, softbank := byName["美国Verizon动态NAT"], byName["日本SoftBank动态NAT"]
+	if verizon.ID != "5" || verizon.Stock.Status != domain.StockOut {
+		t.Fatalf("verizon should be sold out: %+v", verizon)
+	}
+	if softbank.ID != "4" || softbank.Stock.Status != domain.StockIn {
+		t.Fatalf("softbank should be in stock: %+v", softbank)
+	}
+	if softbank.Prices[0].Amount != (domain.Money{Cents: 14900, Currency: "CNY"}) {
+		t.Fatalf("unexpected price %+v", softbank.Prices)
+	}
+	specs := softbank.Specs
+	if specs.CPU != "1" || specs.RAMMB != 512 || specs.DiskGB != 8 || specs.BandwidthMbps != 50 || specs.TrafficGB != 1000 {
+		t.Fatalf("unexpected specs %+v", specs)
+	}
+	if specs.Location != "日本 东京 (普通民宅)" || !strings.Contains(specs.IPType, "SoftBank") {
+		t.Fatalf("label-style location / ip not parsed: %+v", specs)
 	}
 }

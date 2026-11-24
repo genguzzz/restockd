@@ -33,6 +33,7 @@ type SolverSettings struct {
 type Settings struct {
 	Telegram     notify.TelegramConfig `json:"telegram"`
 	Email        notify.EmailConfig    `json:"email"`
+	Bark         notify.BarkConfig     `json:"bark"`
 	Solver       SolverSettings        `json:"solver"`
 	NotifyEvents []string              `json:"notify_events"`
 }
@@ -42,7 +43,7 @@ func DefaultSettings() Settings {
 	return Settings{
 		Email:        notify.EmailConfig{Port: 587, StartTLS: true},
 		Solver:       SolverSettings{FlareSolverrURL: "http://127.0.0.1:8191", ManualTimeoutSec: 300},
-		NotifyEvents: []string{string(domain.EventRestock), string(domain.EventOrder), string(domain.EventChallenge)},
+		NotifyEvents: []string{string(domain.EventRestock), string(domain.EventOrder), string(domain.EventChallenge), string(domain.EventAccount)},
 	}
 }
 
@@ -67,14 +68,16 @@ type Engine struct {
 
 	direct *fetch.DirectClient
 
-	mu        sync.RWMutex
-	settings  Settings
-	flare     *fetch.FlareSolverrClient
-	solver    solver.Solver
-	sites     map[string]*siteRunner
-	sessions  map[string]*fetch.Session
-	orderLock map[string]*sync.Mutex
-	docMu     sync.Mutex
+	mu       sync.RWMutex
+	settings Settings
+	flare    *fetch.FlareSolverrClient
+	solver   solver.Solver
+	sites    map[string]*siteRunner
+	sessions map[string]*fetch.Session
+	// loginLocks 每个账号一把锁，串行化自动登录。
+	loginLocks map[string]*sync.Mutex
+	orderLock  map[string]*sync.Mutex
+	docMu      sync.Mutex
 
 	rootCtx context.Context
 	cancel  context.CancelFunc
@@ -174,7 +177,7 @@ func (e *Engine) Settings() Settings {
 
 // ApplySettings 热更新通知通道与 Solver 链：外部服务 → FlareSolverr → 人工兜底。
 func (e *Engine) ApplySettings(settings Settings) {
-	e.hub.Apply(notify.Settings{Telegram: settings.Telegram, Email: settings.Email, Events: settings.NotifyEvents})
+	e.hub.Apply(notify.Settings{Telegram: settings.Telegram, Email: settings.Email, Bark: settings.Bark, Events: settings.NotifyEvents})
 	timeout := time.Duration(settings.Solver.ManualTimeoutSec) * time.Second
 	if timeout <= 0 {
 		timeout = 5 * time.Minute

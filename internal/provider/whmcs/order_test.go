@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
+
 	"github.com/genguzzz/restockd/internal/domain"
 	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/provider"
@@ -80,16 +82,25 @@ func (f *fakeWHMCS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, f.page(`<form id="frmConfigureProduct" method="post" action="/cart.php?a=confproduct">
 <input type="hidden" name="token" value="`+fakeToken+`"/>
 <input type="hidden" name="i" value="0"/>
+<div class="alert alert-danger hidden" id="containerProductValidationErrors"><h6>Please correct the following errors before continuing:</h6><ul id="containerProductValidationErrorsList"></ul></div>
 <select name="billingcycle"><option value="monthly" selected>Monthly</option><option value="annually">Annually</option></select>
 <select name="configoption[5]"><option value="11" selected>Ubuntu 22.04</option><option value="12">Debian 12</option></select>
 <input type="text" name="hostname" value=""/>
-<input type="password" name="rootpw" value=""/>
+<input type="text" name="rootpw" value="N/A"/>
 <input type="text" name="ns1prefix" value=""/><input type="text" name="ns2prefix" value=""/>
 <input type="checkbox" name="addons[1]" value="on"/>
 </form>`))
 	case r.Method == http.MethodPost && action == "" && r.PostForm.Get("a") == "confproduct":
+		if r.PostForm.Get("ajax") != "1" {
+			// Lagom：非 AJAX 提交停留在配置页且不入车。
+			http.Redirect(w, r, "/cart.php?a=confproduct&i=0", http.StatusFound)
+			return
+		}
+		if pw := r.PostForm.Get("rootpw"); pw == "" || pw == "N/A" {
+			fmt.Fprint(w, `<li>Root password is required</li>`)
+			return
+		}
 		f.cart = append(f.cart, r.PostForm)
-		http.Redirect(w, r, "/cart.php?a=view", http.StatusFound)
 	case r.Method == http.MethodPost && action == "view":
 		code := r.PostForm.Get("promocode")
 		if code != "SAVE10" {
@@ -326,5 +337,34 @@ func TestSessionExpiredOnLoginRedirect(t *testing.T) {
 	_, err := instance.(*Provider).CheckSession(context.Background(), provider.Env{Client: client, Session: session})
 	if !errors.Is(err, provider.ErrSessionExpired) {
 		t.Fatalf("want ErrSessionExpired, got %v", err)
+	}
+}
+
+func TestAjaxErrorsAndHiddenTemplate(t *testing.T) {
+	parse := func(body string) *page {
+		doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &page{resp: &fetch.Response{Body: []byte(body)}, doc: doc}
+	}
+	if got := ajaxErrors(parse("")); got != "" {
+		t.Fatalf("empty ajax response must pass, got %q", got)
+	}
+	if got := ajaxErrors(parse(`<li>Hostname is invalid</li><li>Root password is required</li>`)); got != "Hostname is invalid; Root password is required" {
+		t.Fatalf("unexpected ajax errors %q", got)
+	}
+	full := `<html><body><ul class="nav"><li>Home</li></ul><div class="alert alert-danger hidden"><h6>Please correct the following errors before continuing:</h6><ul></ul></div></body></html>`
+	if got := ajaxErrors(parse(full)); got != "" {
+		t.Fatalf("hidden template / nav items must not count as errors, got %q", got)
+	}
+	cart := parse(`<html><body><div class="alert alert-danger">Promo ends soon</div></body></html>`)
+	cart.resp.URL = "https://shop.test/cart.php?a=view"
+	if got := ajaxErrors(cart); got != "" {
+		t.Fatalf("redirect to cart means the item was added, got %q", got)
+	}
+	visible := `<html><body><div class="alert alert-danger hidden">template</div><div class="alert alert-danger">Out of Stock</div></body></html>`
+	if got := errorMessage(parse(visible).doc); got != "Out of Stock" {
+		t.Fatalf("expected visible error, got %q", got)
 	}
 }

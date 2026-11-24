@@ -17,6 +17,7 @@ const tagType = (type: EventType) => {
     case 'price_change':
       return 'warning'
     case 'poll_error':
+    case 'account':
     case 'sold_out':
       return 'error'
     default:

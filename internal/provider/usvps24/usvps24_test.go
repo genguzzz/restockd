@@ -107,3 +107,45 @@ func TestSubtotalCents(t *testing.T) {
 		t.Fatalf("subtotal %d want %d", got, want)
 	}
 }
+
+func TestStockCatalogMapping(t *testing.T) {
+	raw, err := os.ReadFile("../../../testdata/usvps24/stock.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stock stockResponse
+	if err := json.Unmarshal(raw, &stock); err != nil {
+		t.Fatal(err)
+	}
+	instance, _ := New(domain.Site{ID: "usvps24", BaseURL: "https://usvps24.com"})
+	catalog := instance.(*Provider).stockCatalog(&stock)
+	byID := map[string]domain.Product{}
+	for _, product := range catalog.Products {
+		byID[product.ID] = product
+	}
+	if len(byID) != 11 {
+		t.Fatalf("want 11 products, got %d", len(byID))
+	}
+	pinnacle := byID["pinnacle-network-2"]
+	if pinnacle.Stock.Status != domain.StockIn || pinnacle.Stock.Reason != "invite_only" || *pinnacle.Stock.Qty != 12 {
+		t.Fatalf("invite-only with stock should be in stock + reason, got %+v", pinnacle.Stock)
+	}
+	monthly, ok := pinnacle.PriceFor(domain.CycleMonthly)
+	if !ok || monthly.Amount != (domain.Money{Cents: 18800, Currency: "CNY"}) {
+		t.Fatalf("unexpected monthly price %+v", monthly)
+	}
+	if home := byID["home-pool"]; home.Stock.Status != domain.StockOut || home.Stock.Reason != "sold_out" {
+		t.Fatalf("want sold out, got %+v", home.Stock)
+	}
+	if inv := byID["pinnacle-network"]; inv.Stock.Status != domain.StockOut || inv.Stock.Reason != "invite_only" {
+		t.Fatalf("invite-only without stock should be out, got %+v", inv.Stock)
+	}
+	if byID["att-dedicated-1"].Specs.Extra["carrier"] != "AT&T" || byID["att-dedicated-1"].Specs.TrafficGB != 4000 {
+		t.Fatalf("specs lost: %+v", byID["att-dedicated-1"].Specs)
+	}
+	for status, want := range map[string]domain.StockStatus{"in_stock": domain.StockIn, "preorder": domain.StockPreorder, "coming_soon": domain.StockClosed} {
+		if got := planStock(stockPlan{Status: status, Stock: 3}).Status; got != want {
+			t.Fatalf("%s: want %s, got %s", status, want, got)
+		}
+	}
+}

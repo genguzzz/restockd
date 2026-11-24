@@ -161,7 +161,11 @@ func (e *Engine) executeOrder(ctx context.Context, site domain.Site, watch domai
 	started := time.Now()
 	var result domain.OrderResult
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		result, err = orderer.PlaceOrder(ctx, env, spec)
+		err = e.withSession(ctx, instance, &account, env, true, func() error {
+			var placeErr error
+			result, placeErr = orderer.PlaceOrder(ctx, env, spec)
+			return placeErr
+		})
 		if err == nil || !retryable(err) || attempt == maxAttempts {
 			break
 		}
@@ -205,7 +209,7 @@ func (e *Engine) executeOrder(ctx context.Context, site domain.Site, watch domai
 // retryable 缺货、会话失效、验证取消 / 超时、配置错误等不重试。
 func retryable(err error) bool {
 	switch {
-	case errors.Is(err, provider.ErrOutOfStock), errors.Is(err, provider.ErrSessionExpired), errors.Is(err, provider.ErrNotSupported), errors.Is(err, provider.ErrCouponInvalid):
+	case errors.Is(err, provider.ErrOutOfStock), errors.Is(err, provider.ErrSessionExpired), errors.Is(err, provider.ErrNotSupported), errors.Is(err, provider.ErrCouponInvalid), errors.Is(err, provider.ErrLoginFailed), errors.Is(err, ErrNoAuthenticator):
 		return false
 	case errors.Is(err, solver.ErrChallengeCancelled), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return false
@@ -304,7 +308,12 @@ func (e *Engine) QuoteWatch(ctx context.Context, watchID string) (domain.Quote, 
 	if err != nil {
 		return domain.Quote{}, err
 	}
-	quote, err := orderer.Quote(ctx, env, BuildSpec(watch, account, true))
+	var quote domain.Quote
+	err = e.withSession(ctx, instance, &account, env, true, func() error {
+		var quoteErr error
+		quote, quoteErr = orderer.Quote(ctx, env, BuildSpec(watch, account, true))
+		return quoteErr
+	})
 	e.persistSession(ctx, &account, env.Session)
 	return quote, err
 }
@@ -341,19 +350,28 @@ func (e *Engine) CheckAccount(ctx context.Context, accountID string) (domain.Acc
 	}
 	checker, ok := instance.(provider.SessionChecker)
 	if !ok {
+		// 不能校验但能登录：校验即登录。
+		if _, canLogin := authenticator(instance, &account); canLogin {
+			return e.LoginAccount(ctx, accountID)
+		}
 		return account, provider.ErrNotSupported
 	}
 	env, err := e.buildEnv(site, &account)
 	if err != nil {
 		return domain.Account{}, err
 	}
-	info, checkErr := checker.CheckSession(ctx, env)
+	var info provider.SessionInfo
+	checkErr := e.withSession(ctx, instance, &account, env, true, func() error {
+		var err error
+		info, err = checker.CheckSession(ctx, env)
+		return err
+	})
 	e.persistSession(ctx, &account, env.Session)
 	return e.updateAccount(ctx, accountID, func(stored *domain.Account) {
 		stored.CheckedAt = time.Now().UTC()
 		if checkErr != nil {
 			stored.Status = domain.AccountUnknown
-			if errors.Is(checkErr, provider.ErrSessionExpired) {
+			if errors.Is(checkErr, provider.ErrSessionExpired) || errors.Is(checkErr, provider.ErrLoginFailed) {
 				stored.Status = domain.AccountExpired
 			}
 			stored.LastError = checkErr.Error()

@@ -86,7 +86,8 @@ func CSRFToken(doc *goquery.Document, body []byte) string {
 }
 
 var (
-	amountPattern   = regexp.MustCompile(`(-?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?)`)
+	// 千分位分支至少要有一组分隔符：否则 "1000.00" 会被第一个分支截成 "100"。
+	amountPattern   = regexp.MustCompile(`(-?\d{1,3}(?:[,\s]\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)`)
 	currencyPattern = regexp.MustCompile(`\b([A-Z]{3})\b`)
 )
 

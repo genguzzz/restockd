@@ -38,7 +38,7 @@ func meta() provider.Meta {
 		Kind:            Kind,
 		Name:            "WHMCS",
 		Description:     "通用 WHMCS 站点（Lagom / standard_cart / twenty-one 主题），按商品组页面监控，购物车流程锁单",
-		Caps:            provider.Capabilities{Catalog: true, Coupon: true, Order: true, SessionCheck: true},
+		Caps:            provider.Capabilities{Catalog: true, Coupon: true, Order: true, SessionCheck: true, Login: true},
 		MinInterval:     20 * time.Second,
 		DefaultInterval: 60 * time.Second,
 		DefaultFetch:    domain.FetchFlareSolverr,
@@ -173,6 +173,11 @@ var (
 	cpuPattern       = regexp.MustCompile(`(?i)(\d+)\s*x?\s*(vCPU|CPU|Cores?|核)`)
 	bandwidthPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(Mbps|Gbps)`)
 	trafficPattern   = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(GB|TB)\b.*(Traffic|Transfer|流量)`)
+	// 「标签：数值」写法（中文主题常见：内存：512MB、流量：1000GB、位置：日本 东京）。
+	ramLabelPattern      = regexp.MustCompile(`(?i)^(?:内存|RAM|Memory)\s*[：:]\s*(\d+(?:\.\d+)?)\s*(MB|GB|G|M)\b`)
+	trafficLabelPattern  = regexp.MustCompile(`(?i)^(?:流量|Traffic|Transfer|Bandwidth Quota)\s*[：:]\s*(\d+(?:\.\d+)?)\s*(GB|TB)\b`)
+	locationLabelPattern = regexp.MustCompile(`(?i)^(?:位置|机房|地区|Location|Datacenter)\s*[：:]\s*(.+)$`)
+	ipLabelPattern       = regexp.MustCompile(`(?i)^IP\s*[：:]\s*(.+)$`)
 )
 
 // parseSpecs 从特性列表逐行识别规格；无法归类的行进入 Extra。
@@ -187,6 +192,16 @@ func parseSpecs(node *goquery.Selection) domain.Specs {
 			continue
 		}
 		switch {
+		case specs.Location == "" && locationLabelPattern.MatchString(text):
+			specs.Location = strings.TrimSpace(locationLabelPattern.FindStringSubmatch(text)[1])
+		case specs.IPType == "" && ipLabelPattern.MatchString(text):
+			specs.IPType = strings.TrimSpace(ipLabelPattern.FindStringSubmatch(text)[1])
+		case specs.RAMMB == 0 && ramLabelPattern.MatchString(text):
+			match := ramLabelPattern.FindStringSubmatch(text)
+			specs.RAMMB = sizeMB(match[1], match[2])
+		case specs.TrafficGB == 0 && trafficLabelPattern.MatchString(text):
+			match := trafficLabelPattern.FindStringSubmatch(text)
+			specs.TrafficGB = sizeGB([]string{text, match[1], match[2]})
 		case specs.TrafficGB == 0 && trafficPattern.MatchString(text):
 			specs.TrafficGB = sizeGB(trafficPattern.FindStringSubmatch(text))
 		case specs.RAMMB == 0 && ramPattern.MatchString(text):

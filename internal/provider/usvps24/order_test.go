@@ -31,6 +31,7 @@ type fakeSite struct {
 	rejectWith   string
 	jsonHits     int
 	htmlHits     int
+	stockHits    int
 }
 
 func newFakeSite(t *testing.T, loggedIn bool) *fakeSite {
@@ -74,6 +75,11 @@ func (f *fakeSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/stock":
+		raw, _ := os.ReadFile("../../../testdata/usvps24/stock.json")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(raw)
+		f.stockHits++
 	case r.Method == http.MethodGet && r.URL.Path == "/orders/create":
 		f.writePage(w, r, f.page)
 	case r.Method == http.MethodPost && r.URL.Path == "/orders/coupon/preview":
@@ -126,7 +132,41 @@ func newEnv(t *testing.T, fake *fakeSite, slv solver.Solver) (*Provider, provide
 	return instance.(*Provider), provider.Env{Site: site, Client: client, Session: session, Solver: slv, Account: &domain.Account{ID: "a1"}}
 }
 
-func TestCatalogUsesInertiaJSONAfterFirstLoad(t *testing.T) {
+func TestLoadCheckoutUsesInertiaJSONAfterFirstLoad(t *testing.T) {
+	fake := newFakeSite(t, false)
+	p, env := newEnv(t, fake, nil)
+	for i := 0; i < 3; i++ {
+		props, err := p.loadCheckout(context.Background(), env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(props.Products) != 11 {
+			t.Fatalf("want 11 products, got %d", len(props.Products))
+		}
+	}
+	if fake.htmlHits != 1 || fake.jsonHits != 2 {
+		t.Fatalf("want 1 html + 2 json loads, got html=%d json=%d", fake.htmlHits, fake.jsonHits)
+	}
+}
+
+func TestLoadCheckoutRecoversFromVersionChange(t *testing.T) {
+	fake := newFakeSite(t, false)
+	p, env := newEnv(t, fake, nil)
+	if _, err := p.loadCheckout(context.Background(), env); err != nil {
+		t.Fatal(err)
+	}
+	fake.version = "new-build"
+	fake.page["version"] = "new-build"
+	if _, err := p.loadCheckout(context.Background(), env); err != nil {
+		t.Fatalf("409 should trigger html reload: %v", err)
+	}
+	if p.getVersion() != "new-build" {
+		t.Fatalf("version not refreshed: %s", p.getVersion())
+	}
+}
+
+// 监控只能打公开库存接口，绝不能碰下单页（站点会封 IP 6 小时）。
+func TestCatalogOnlyHitsStockAPI(t *testing.T) {
 	fake := newFakeSite(t, false)
 	p, env := newEnv(t, fake, nil)
 	for i := 0; i < 3; i++ {
@@ -138,24 +178,32 @@ func TestCatalogUsesInertiaJSONAfterFirstLoad(t *testing.T) {
 			t.Fatalf("want 11 products, got %d", len(catalog.Products))
 		}
 	}
-	if fake.htmlHits != 1 || fake.jsonHits != 2 {
-		t.Fatalf("want 1 html + 2 json loads, got html=%d json=%d", fake.htmlHits, fake.jsonHits)
+	if fake.stockHits != 3 || fake.htmlHits != 0 || fake.jsonHits != 0 {
+		t.Fatalf("catalog must only use stock api: stock=%d html=%d json=%d", fake.stockHits, fake.htmlHits, fake.jsonHits)
 	}
 }
 
-func TestCatalogRecoversFromVersionChange(t *testing.T) {
+func TestCatalogEnrichedAfterOrderPageLoad(t *testing.T) {
 	fake := newFakeSite(t, false)
 	p, env := newEnv(t, fake, nil)
-	if _, err := p.Catalog(context.Background(), env); err != nil {
+	if _, err := p.loadCheckout(context.Background(), env); err != nil {
 		t.Fatal(err)
 	}
-	fake.version = "new-build"
-	fake.page["version"] = "new-build"
-	if _, err := p.Catalog(context.Background(), env); err != nil {
-		t.Fatalf("409 should trigger html reload: %v", err)
+	catalog, err := p.Catalog(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if p.getVersion() != "new-build" {
-		t.Fatalf("version not refreshed: %s", p.getVersion())
+	var pinnacle domain.Product
+	for _, product := range catalog.Products {
+		if product.ID == "pinnacle-network-2" {
+			pinnacle = product
+		}
+	}
+	if pinnacle.Specs.Extra["product_id"] != "21" || len(pinnacle.Options) != 2 {
+		t.Fatalf("expected enrichment from order page, got %+v", pinnacle)
+	}
+	if len(catalog.Gateways) != 2 || catalog.Promo == nil {
+		t.Fatalf("gateways/promo should come from cached order page: %+v", catalog)
 	}
 }
 
@@ -163,7 +211,7 @@ func TestPlaceOrderSubmitsCheckout(t *testing.T) {
 	fake := newFakeSite(t, true)
 	slv := &tokenSolver{}
 	p, env := newEnv(t, fake, slv)
-	spec := domain.OrderSpec{ProductID: "21", Cycle: domain.CycleMonthly, Coupon: "bf2026", Gateway: "qianjimiao", OS: "debian-12", Qty: 1, Options: map[string]string{"bandwidth_mbps": "200", "ip_count": "1"}}
+	spec := domain.OrderSpec{ProductID: "pinnacle-network-2", Cycle: domain.CycleMonthly, Coupon: "bf2026", Gateway: "qianjimiao", OS: "debian-12", Qty: 1, Options: map[string]string{"bandwidth_mbps": "200", "ip_count": "1"}}
 	result, err := p.PlaceOrder(context.Background(), env, spec)
 	if err != nil {
 		t.Fatal(err)
