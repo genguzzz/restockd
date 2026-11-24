@@ -20,7 +20,7 @@ import (
 	"github.com/genguzzz/restockd/internal/store"
 )
 
-// authProvider 只认 sid=fresh 的会话；Login 校验密码后种下 sid=fresh。
+// authProvider 只认 sid=fresh 的会话；Login 校验密码后种下 sid=fresh（密码 flaky 模拟验证码超时等非拒绝失败）。
 type authProvider struct {
 	mu     sync.Mutex
 	logins int
@@ -62,6 +62,9 @@ func (f *authProvider) Login(_ context.Context, env provider.Env, creds domain.C
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.logins++
+	if creds.Password == "flaky" {
+		return provider.SessionInfo{}, errors.New("captcha timeout")
+	}
 	if creds.Password != "right" {
 		return provider.SessionInfo{}, fmt.Errorf("%w: wrong password", provider.ErrLoginFailed)
 	}
@@ -103,15 +106,19 @@ func newAuthEngine(t *testing.T) (*Engine, *store.Store, domain.Site, *captureNo
 func newAuthAccount(t *testing.T, engine *Engine, site domain.Site, password string) domain.Account {
 	t.Helper()
 	ctx := context.Background()
-	account, err := engine.SaveAccount(ctx, domain.Account{SiteID: site.ID, Label: "main"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	account, err = engine.SetCredentials(ctx, account.ID, "me@example.com", &password)
+	username := "me@example.com"
+	account, err := engine.SaveAccount(ctx, AccountInput{SiteID: site.ID, Label: "main", Username: &username, Password: &password})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return account
+}
+
+func ptr(value string) *string { return &value }
+
+// setCredentials 只改凭据（其余字段按原值回传，同界面保存）。
+func setCredentials(engine *Engine, account domain.Account, username string, password *string) (domain.Account, error) {
+	return engine.SaveAccount(context.Background(), AccountInput{ID: account.ID, SiteID: account.SiteID, Label: account.Label, Username: &username, Password: password})
 }
 
 func TestAutoLoginBeforeFirstUse(t *testing.T) {
@@ -119,7 +126,7 @@ func TestAutoLoginBeforeFirstUse(t *testing.T) {
 	engine, st, site, _ := newAuthEngine(t)
 	account := newAuthAccount(t, engine, site, "right")
 	watch, _ := engine.SaveWatch(ctx, domain.Watch{SiteID: site.ID, ProductID: "1", AccountID: account.ID, Enabled: true})
-	order, err := engine.OrderWatch(ctx, watch.ID, false)
+	order, err := engine.OrderWatch(ctx, watch.ID, false, true)
 	if err != nil || order.Status != domain.OrderPlaced {
 		t.Fatalf("order should succeed after login: %v %+v", err, order)
 	}
@@ -143,7 +150,7 @@ func TestAutoLoginOnExpiredSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	watch, _ := engine.SaveWatch(ctx, domain.Watch{SiteID: site.ID, ProductID: "1", AccountID: account.ID, Enabled: true})
-	order, err := engine.OrderWatch(ctx, watch.ID, false)
+	order, err := engine.OrderWatch(ctx, watch.ID, false, true)
 	if err != nil || order.Status != domain.OrderPlaced {
 		t.Fatalf("order should succeed after re-login: %v %+v", err, order)
 	}
@@ -157,7 +164,7 @@ func TestAutoLoginWrongPassword(t *testing.T) {
 	engine, st, site, capture := newAuthEngine(t)
 	account := newAuthAccount(t, engine, site, "wrong")
 	watch, _ := engine.SaveWatch(ctx, domain.Watch{SiteID: site.ID, ProductID: "1", AccountID: account.ID, Enabled: true})
-	order, err := engine.OrderWatch(ctx, watch.ID, false)
+	order, err := engine.OrderWatch(ctx, watch.ID, false, true)
 	if err == nil || order.Status != domain.OrderFailed || !strings.Contains(order.Error, "auto login") {
 		t.Fatalf("want login failure, got %v %+v", err, order)
 	}
@@ -185,9 +192,6 @@ func TestLoginAccountAndCredentialStorage(t *testing.T) {
 	ctx := context.Background()
 	engine, st, site, _ := newAuthEngine(t)
 	account := newAuthAccount(t, engine, site, "right")
-	if !account.HasPassword || account.Username != "me@example.com" {
-		t.Fatalf("public credential fields not synced: %+v", account)
-	}
 	raw, _ := json.Marshal(account)
 	if strings.Contains(string(raw), "right") {
 		t.Fatalf("password leaked into JSON: %s", raw)
@@ -196,16 +200,15 @@ func TestLoginAccountAndCredentialStorage(t *testing.T) {
 	if err != nil || updated.Status != domain.AccountActive {
 		t.Fatalf("manual login failed: %v %+v", err, updated)
 	}
-	// 只改用户名不动密码。
-	if _, err := engine.SetCredentials(ctx, account.ID, "new@example.com", nil); err != nil {
+	// 只改用户名不动密码（省略或回传掩码都表示不修改）。
+	if _, err := setCredentials(engine, account, "new@example.com", ptr(SecretMask)); err != nil {
 		t.Fatal(err)
 	}
 	stored, _ := st.GetAccount(ctx, account.ID)
 	if stored.Credentials.Username != "new@example.com" || stored.Credentials.Password != "right" {
 		t.Fatalf("credentials not stored correctly: %+v", stored.Credentials)
 	}
-	empty := ""
-	if _, err := engine.SetCredentials(ctx, account.ID, "new@example.com", &empty); err != nil {
+	if _, err := setCredentials(engine, account, "new@example.com", ptr("")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := engine.LoginAccount(ctx, account.ID); err == nil {
@@ -218,8 +221,8 @@ func TestRejectedPasswordPausesAutoLogin(t *testing.T) {
 	engine, st, site, _ := newAuthEngine(t)
 	account := newAuthAccount(t, engine, site, "wrong")
 	watch, _ := engine.SaveWatch(ctx, domain.Watch{SiteID: site.ID, ProductID: "1", AccountID: account.ID, Enabled: true})
-	_, _ = engine.OrderWatch(ctx, watch.ID, false)
-	_, _ = engine.OrderWatch(ctx, watch.ID, false)
+	_, _ = engine.OrderWatch(ctx, watch.ID, false, true)
+	_, _ = engine.OrderWatch(ctx, watch.ID, false, true)
 	if logins, _ := authState.reset(); logins != 1 {
 		t.Fatalf("rejected password must not be retried automatically, got %d logins", logins)
 	}
@@ -233,11 +236,10 @@ func TestRejectedPasswordPausesAutoLogin(t *testing.T) {
 		t.Fatalf("manual login must always try, got %d", logins)
 	}
 	// 改密码后恢复自动登录。
-	right := "right"
-	if _, err := engine.SetCredentials(ctx, account.ID, "me@example.com", &right); err != nil {
+	if _, err := setCredentials(engine, account, "me@example.com", ptr("right")); err != nil {
 		t.Fatal(err)
 	}
-	order, err := engine.OrderWatch(ctx, watch.ID, false)
+	order, err := engine.OrderWatch(ctx, watch.ID, false, true)
 	if err != nil || order.Status != domain.OrderPlaced {
 		t.Fatalf("order should work after fixing password: %v %+v", err, order)
 	}
@@ -248,7 +250,7 @@ func TestUsernameChangeDropsOldSession(t *testing.T) {
 	engine, st, site, _ := newAuthEngine(t)
 	account := newAuthAccount(t, engine, site, "right")
 	_, _ = engine.SetCookies(ctx, account.ID, []*http.Cookie{{Name: "sid", Value: "fresh"}}, "")
-	if _, err := engine.SetCredentials(ctx, account.ID, "other@example.com", nil); err != nil {
+	if _, err := setCredentials(engine, account, "other@example.com", nil); err != nil {
 		t.Fatal(err)
 	}
 	stored, _ := st.GetAccount(ctx, account.ID)
@@ -256,9 +258,8 @@ func TestUsernameChangeDropsOldSession(t *testing.T) {
 		t.Fatalf("old user's cookies must be dropped: %+v", stored)
 	}
 	// 只改密码不动 Cookie。
-	pw := "right"
 	_, _ = engine.SetCookies(ctx, account.ID, []*http.Cookie{{Name: "sid", Value: "fresh"}}, "")
-	_, _ = engine.SetCredentials(ctx, account.ID, "other@example.com", &pw)
+	_, _ = setCredentials(engine, account, "other@example.com", ptr("right"))
 	stored, _ = st.GetAccount(ctx, account.ID)
 	if len(stored.Cookies) != 1 {
 		t.Fatalf("password-only change must keep cookies: %+v", stored.Cookies)
@@ -273,7 +274,7 @@ func TestPublicPollDoesNotPreLogin(t *testing.T) {
 	if _, err := engine.SaveSite(ctx, site); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.PollNow(ctx, site.ID); err != nil {
+	if _, err := engine.PollNow(ctx, site.ID); err != nil {
 		t.Fatal(err)
 	}
 	if logins, _ := authState.reset(); logins != 0 {
@@ -309,21 +310,121 @@ func TestEgressClientAndRateLimitNotRetried(t *testing.T) {
 	}
 }
 
-func TestMigrateSiteProxy(t *testing.T) {
+func accountNotices(capture *captureNotifier) int {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	count := 0
+	for _, message := range capture.messages {
+		if message.Event == string(domain.EventAccount) {
+			count++
+		}
+	}
+	return count
+}
+
+func TestFailedLoginPausesAutoLoginAndNotifiesOnce(t *testing.T) {
 	ctx := context.Background()
-	st, _ := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	defer st.Close()
-	if err := st.SaveSite(ctx, domain.Site{ID: "uv", Kind: "fakeauth", Name: "UV", BaseURL: "https://x", Proxy: "socks5://127.0.0.1:10820", Config: map[string]string{}}); err != nil {
+	engine, st, site, capture := newAuthEngine(t)
+	account := newAuthAccount(t, engine, site, "flaky")
+	watch, _ := engine.SaveWatch(ctx, domain.Watch{SiteID: site.ID, ProductID: "1", AccountID: account.ID, Enabled: true})
+	for i := 0; i < 3; i++ {
+		if order, _ := engine.OrderWatch(ctx, watch.ID, false, true); order.Status != domain.OrderFailed {
+			t.Fatalf("order must fail: %+v", order)
+		}
+	}
+	if logins, _ := authState.reset(); logins != 1 {
+		t.Fatalf("auto login must pause after a failure, got %d logins", logins)
+	}
+	stored, _ := st.GetAccount(ctx, account.ID)
+	if stored.CredentialsRejected || stored.Status != domain.AccountExpired {
+		t.Fatalf("non-rejection failure must not flag credentials: %+v", stored)
+	}
+	// 手动登录不受暂停限制；状态未变（仍失效）不重复通知。
+	if _, err := engine.LoginAccount(ctx, account.ID); !errors.Is(err, ErrUpstream) {
+		t.Fatalf("manual login error must be upstream: %v", err)
+	}
+	if logins, _ := authState.reset(); logins != 1 {
+		t.Fatalf("manual login must bypass the pause, got %d", logins)
+	}
+	waitFor(t, "account notice", func() bool { return accountNotices(capture) >= 1 })
+	time.Sleep(100 * time.Millisecond)
+	if n := accountNotices(capture); n != 1 {
+		t.Fatalf("account alerts must fire once per transition, got %d", n)
+	}
+	// 修改密码解除暂停。
+	if _, err := setCredentials(engine, account, "me@example.com", ptr("right")); err != nil {
 		t.Fatal(err)
 	}
-	engine, _ := New(Options{Store: st})
-	if err := engine.Start(ctx); err != nil {
+	if order, err := engine.OrderWatch(ctx, watch.ID, false, true); err != nil || order.Status != domain.OrderPlaced {
+		t.Fatalf("credential change must lift the pause: %v %+v", err, order)
+	}
+}
+
+func TestMarkAccountStatusNotifiesOnTransition(t *testing.T) {
+	ctx := context.Background()
+	engine, st, site, capture := newAuthEngine(t)
+	account, _ := engine.SaveAccount(ctx, AccountInput{SiteID: site.ID, Label: "main"})
+	for i := 0; i < 3; i++ {
+		engine.markAccountStatus(ctx, account.ID, domain.AccountExpired, "session expired")
+	}
+	events, _ := st.ListEvents(ctx, site.ID, 50)
+	accountEvents := 0
+	for _, event := range events {
+		if event.Type == domain.EventAccount {
+			accountEvents++
+		}
+	}
+	if accountEvents != 1 {
+		t.Fatalf("want 1 account event, got %d", accountEvents)
+	}
+	waitFor(t, "account notice", func() bool { return accountNotices(capture) == 1 })
+	// 恢复后再次失效重新提醒。
+	engine.markAccountStatus(ctx, account.ID, domain.AccountActive, "")
+	engine.markAccountStatus(ctx, account.ID, domain.AccountExpired, "session expired")
+	waitFor(t, "second notice", func() bool { return accountNotices(capture) == 2 })
+}
+
+func TestPersistSessionSkipsReplacedCookies(t *testing.T) {
+	ctx := context.Background()
+	engine, st, site, _ := newAuthEngine(t)
+	account, _ := engine.SaveAccount(ctx, AccountInput{SiteID: site.ID, Label: "main", Cookies: []*http.Cookie{{Name: "sid", Value: "old"}}})
+	inflight, err := engine.prepare(ctx, site, account.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer engine.Stop()
-	site, _ := st.GetSite(ctx, "uv")
-	settings := engine.Settings()
-	if site.Proxy != "" || len(site.Egress) != 1 || len(settings.Egress.Proxies) != 1 || settings.Egress.Proxies[0].URL != "socks5://127.0.0.1:10820" || settings.Egress.Proxies[0].ID != site.Egress[0] {
-		t.Fatalf("proxy not migrated: site=%+v egress=%+v", site, settings.Egress)
+	// 在途调用期间用户粘贴了新 Cookie；旧会话随后滚动刷新并试图写回。
+	if _, err := engine.SetCookies(ctx, account.ID, []*http.Cookie{{Name: "sid", Value: "pasted"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	inflight.env.Session.SetCookies([]*http.Cookie{{Name: "sid", Value: "rolled-old", Path: "/"}})
+	engine.persistSession(ctx, inflight.account, inflight.env.Session)
+	if stored, _ := st.GetAccount(ctx, account.ID); len(stored.Cookies) != 1 || stored.Cookies[0].Value != "pasted" {
+		t.Fatalf("stale session overwrote pasted cookies: %+v", stored.Cookies)
+	}
+	// 当前会话照常回写。
+	current, _ := engine.prepare(ctx, site, account.ID)
+	if current.env.Session.Cookie("sid") != "pasted" {
+		t.Fatalf("new session must start from pasted cookies, got %q", current.env.Session.Cookie("sid"))
+	}
+	current.env.Session.SetCookies([]*http.Cookie{{Name: "sid", Value: "rolled", Path: "/"}})
+	engine.persistSession(ctx, current.account, current.env.Session)
+	if stored, _ := st.GetAccount(ctx, account.ID); stored.Cookies[0].Value != "rolled" {
+		t.Fatalf("current session not persisted: %+v", stored.Cookies)
+	}
+}
+
+func TestSaveAccountAtomicCreate(t *testing.T) {
+	ctx := context.Background()
+	engine, st, site, _ := newAuthEngine(t)
+	if _, err := engine.SaveAccount(ctx, AccountInput{SiteID: "missing"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unknown site must be invalid, got %v", err)
+	}
+	account, err := engine.SaveAccount(ctx, AccountInput{SiteID: site.ID, Label: "x", Username: ptr(" u "), Password: ptr("p"), Cookies: []*http.Cookie{{Name: "sid", Value: "v"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := st.GetAccount(ctx, account.ID)
+	if stored.Credentials != (domain.Credentials{Username: "u", Password: "p"}) || len(stored.Cookies) != 1 || stored.Status != domain.AccountUnknown {
+		t.Fatalf("create not applied atomically: %+v", stored)
 	}
 }

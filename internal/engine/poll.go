@@ -3,13 +3,12 @@ package engine
 import (
 	"context"
 	"errors"
-	"fmt"
+	"maps"
 	"math/rand/v2"
 	"time"
 
 	"github.com/genguzzz/restockd/internal/domain"
 	"github.com/genguzzz/restockd/internal/fetch"
-	"github.com/genguzzz/restockd/internal/notify"
 	"github.com/genguzzz/restockd/internal/provider"
 	"github.com/genguzzz/restockd/internal/store"
 )
@@ -23,10 +22,18 @@ const (
 type siteRunner struct {
 	site     domain.Site
 	provider provider.Provider
-	trigger  chan chan error
+	trigger  chan chan pollResult
 	wake     chan wakeKind
 	cancel   context.CancelFunc
 	done     chan struct{}
+	// hiddenWarned 已记过「商品隐藏、跳过自动锁单」日志的关注（只在调度协程内访问）。
+	hiddenWarned map[string]bool
+}
+
+// pollResult 一次轮询的结果：商品数与错误。
+type pollResult struct {
+	products int
+	err      error
 }
 
 // ReloadSite 新建 / 更新站点后重启其调度协程；禁用站点只停止不启动。
@@ -40,7 +47,7 @@ func (e *Engine) ReloadSite(site domain.Site) error {
 		return err
 	}
 	ctx, cancel := context.WithCancel(e.rootCtx)
-	runner := &siteRunner{site: site, provider: instance, trigger: make(chan chan error), wake: make(chan wakeKind, 1), cancel: cancel, done: make(chan struct{})}
+	runner := &siteRunner{site: site, provider: instance, trigger: make(chan chan pollResult), wake: make(chan wakeKind, 1), cancel: cancel, done: make(chan struct{}), hiddenWarned: map[string]bool{}}
 	e.mu.Lock()
 	e.sites[site.ID] = runner
 	delete(e.sessions, "anon:"+site.ID)
@@ -62,25 +69,25 @@ func (e *Engine) StopSite(siteID string) {
 	}
 }
 
-// PollNow 立即轮询一次并等待结果。
-func (e *Engine) PollNow(ctx context.Context, siteID string) error {
+// PollNow 立即轮询一次并等待结果，返回本次抓到的商品数。
+func (e *Engine) PollNow(ctx context.Context, siteID string) (int, error) {
 	e.mu.RLock()
 	runner, ok := e.sites[siteID]
 	e.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("site %s is not running (disabled?)", siteID)
+		return 0, invalidf("site %s is not running (disabled?)", siteID)
 	}
-	reply := make(chan error, 1)
+	reply := make(chan pollResult, 1)
 	select {
 	case runner.trigger <- reply:
 	case <-ctx.Done():
-		return ctx.Err()
+		return 0, ctx.Err()
 	}
 	select {
-	case err := <-reply:
-		return err
+	case result := <-reply:
+		return result.products, result.err
 	case <-ctx.Done():
-		return ctx.Err()
+		return 0, ctx.Err()
 	}
 }
 
@@ -101,15 +108,19 @@ func (e *Engine) runSite(ctx context.Context, runner *siteRunner) {
 		timer.Reset(wait)
 	}
 	failures := 0
-	var lastPoll time.Time
+	// nextAllowed 上次轮询 + 等待时间（失败时含退避 / Retry-After）：失败期间唤醒不得提前轮询。
+	var lastPoll, nextAllowed time.Time
 	for {
-		var reply chan error
+		var reply chan pollResult
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
 		case reply = <-runner.trigger:
 		case kind := <-runner.wake:
+			if failures > 0 && time.Now().Before(nextAllowed) {
+				continue
+			}
 			interval, watched := e.siteInterval(ctx, runner)
 			sinceLast := time.Since(lastPoll)
 			switch {
@@ -118,16 +129,14 @@ func (e *Engine) runSite(ctx context.Context, runner *siteRunner) {
 			case lastPoll.IsZero() || sinceLast >= interval:
 				// 新间隔下已到期。
 			default:
-				if failures == 0 {
-					resetTimer(interval-sinceLast, failures)
-				}
+				resetTimer(interval-sinceLast, failures)
 				continue
 			}
 		}
-		err := e.pollSite(ctx, runner)
+		products, err := e.pollSite(ctx, runner)
 		lastPoll = time.Now()
 		if reply != nil {
-			reply <- err
+			reply <- pollResult{products: products, err: err}
 		}
 		if ctx.Err() != nil {
 			return
@@ -140,6 +149,7 @@ func (e *Engine) runSite(ctx context.Context, runner *siteRunner) {
 		} else {
 			failures = 0
 		}
+		nextAllowed = lastPoll.Add(wait)
 		resetTimer(wait, failures)
 	}
 }
@@ -169,55 +179,48 @@ func backoff(interval time.Duration, failures int, err error) time.Duration {
 	return wait
 }
 
-// pollSite 抓取目录 → 比对 → 落库 → 广播 → 触发关注规则。
-func (e *Engine) pollSite(ctx context.Context, runner *siteRunner) error {
+// pollSite 抓取目录 → 比对 → 落库 → 广播 → 触发关注规则，返回商品数。
+func (e *Engine) pollSite(ctx context.Context, runner *siteRunner) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, pollTimeout)
 	defer cancel()
 	site, err := e.store.GetSite(ctx, runner.site.ID)
 	if err != nil {
-		return err
-	}
-	var account *domain.Account
-	if site.MonitorAccount != "" {
-		loaded, err := e.store.GetAccount(ctx, site.MonitorAccount)
-		if err == nil {
-			account = &loaded
-		}
-	}
-	env, err := e.buildEnv(site, account)
-	if err != nil {
-		return err
+		return 0, err
 	}
 	started := time.Now()
 	var catalog domain.Catalog
-	// 只有声明「库存需登录」的站点才在无 Cookie 时预先登录；公开库存先直接拉。
-	pollErr := e.withSession(ctx, runner.provider, account, env, runner.provider.Meta().Caps.StockNeedsLogin, func() error {
-		var err error
-		catalog, err = runner.provider.Catalog(ctx, env)
-		return err
-	})
-	e.persistSession(ctx, account, env.Session)
-	if pollErr != nil {
-		e.markPollResult(ctx, site.ID, pollErr)
-		e.reportPollError(ctx, site, pollErr)
-		return pollErr
+	c, err := e.prepare(ctx, site, site.MonitorAccount)
+	if err == nil {
+		// 只有声明「库存需登录」的站点才在无 Cookie 时预先登录；公开库存先直接拉。
+		err = e.run(ctx, c, runner.provider.Meta().Caps.StockNeedsLogin, func() error {
+			var catalogErr error
+			catalog, catalogErr = c.inst.Catalog(ctx, c.env)
+			return catalogErr
+		})
+	}
+	if err != nil {
+		e.markPollResult(ctx, site.ID, err)
+		e.reportPollError(ctx, site, err)
+		return 0, err
 	}
 	previous, err := e.store.ListProducts(ctx, site.ID)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	byID := make(map[string]domain.Product, len(catalog.Products))
 	for i := range catalog.Products {
 		catalog.Products[i].SiteID = site.ID
 		catalog.Products[i].SortPrices()
+		byID[catalog.Products[i].ID] = catalog.Products[i]
 	}
 	if err := e.store.ReplaceProducts(ctx, site.ID, catalog.Products); err != nil {
-		return err
+		return 0, err
 	}
 	e.markPollResult(ctx, site.ID, nil)
 	e.log.Debug("polled", "site", site.ID, "products", len(catalog.Products), "elapsed", time.Since(started))
 	watches, err := e.store.ListWatches(ctx, site.ID)
 	if err != nil {
-		return err
+		return len(catalog.Products), err
 	}
 	watched := watchIndex(watches)
 	if idSchemeChanged(previous, catalog.Products) {
@@ -226,11 +229,34 @@ func (e *Engine) pollSite(ctx context.Context, runner *siteRunner) error {
 		e.log.Warn("product ids changed completely, treating poll as baseline", "site", site.ID, "previous", len(previous), "current", len(catalog.Products), "watches", len(watches))
 		previous = nil
 	}
-	for _, event := range Diff(site.ID, previous, catalog.Products) {
-		e.recordEvent(ctx, event, e.messageFor(site, event, watched))
+	// Diff 用完整目录（取消隐藏时不会一次性冒出积压事件），隐藏商品的事件直接丢弃。
+	for _, change := range Diff(site.ID, previous, catalog.Products) {
+		if site.Hidden(change.ProductID) {
+			continue
+		}
+		event, message := stockNotice(site, change, watched, byID)
+		e.recordEvent(ctx, event, message)
 	}
-	e.triggerWatches(site, catalog.Products, watches)
-	return nil
+	e.triggerWatches(site, e.orderableProducts(runner, site, byID, watches), watches)
+	return len(catalog.Products), nil
+}
+
+// orderableProducts 去掉隐藏商品（不自动锁单）；关注了隐藏商品的自动锁单规则每条只记一次日志。
+func (e *Engine) orderableProducts(runner *siteRunner, site domain.Site, products map[string]domain.Product, watches []domain.Watch) map[string]domain.Product {
+	if len(site.HiddenProducts) == 0 {
+		return products
+	}
+	visible := maps.Clone(products)
+	for _, id := range site.HiddenProducts {
+		delete(visible, id)
+	}
+	for _, watch := range watches {
+		if watch.Enabled && watch.AutoOrder && site.Hidden(watch.ProductID) && !runner.hiddenWarned[watch.ID] {
+			runner.hiddenWarned[watch.ID] = true
+			e.log.Info("auto order skipped: product is hidden", "site", site.ID, "watch", watch.ID, "product", watch.ProductID)
+		}
+	}
+	return visible
 }
 
 // idSchemeChanged 两次都有商品但 ID 没有任何交集。
@@ -261,34 +287,14 @@ func watchIndex(watches []domain.Watch) map[string]bool {
 	return index
 }
 
-// messageFor 只有被关注商品的补货 / 价格变动才推送；新品上架对所有商品推送。
-func (e *Engine) messageFor(site domain.Site, event domain.Event, watched map[string]bool) *notify.Message {
-	switch event.Type {
-	case domain.EventRestock, domain.EventPriceChange:
-		if !watched[event.ProductID] {
-			return nil
-		}
-	case domain.EventNewProduct:
-	default:
-		return nil
-	}
-	link := ""
-	if product, err := e.store.GetProduct(context.Background(), site.ID, event.ProductID); err == nil {
-		link = product.URL
-	}
-	return &notify.Message{Title: "[" + site.Name + "] " + event.Title, Body: event.Detail, URL: link}
-}
-
+// reportPollError 记轮询失败事件；监控账号会话失效时更新账号状态（变为失效时才通知，
+// 自动登录失败已在 login 里按同样规则通知）。
 func (e *Engine) reportPollError(ctx context.Context, site domain.Site, err error) {
-	detail := err.Error()
-	if fetch.IsChallenge(err) {
-		detail += "；请在站点设置中启用 FlareSolverr，或给监控账号粘贴同一 IP/UA 获取的 cf_clearance Cookie"
-	}
 	if errors.Is(err, provider.ErrSessionExpired) && site.MonitorAccount != "" {
-		// 自动登录失败已在 login 里记录并通知；这里只处理无凭据的情况。
 		e.markAccountStatus(ctx, site.MonitorAccount, domain.AccountExpired, err.Error())
 	}
-	e.recordEvent(ctx, domain.Event{Type: domain.EventPollError, SiteID: site.ID, Title: site.Name + " 轮询失败", Detail: detail}, nil)
+	event, message := pollErrorNotice(site, err)
+	e.recordEvent(ctx, event, message)
 }
 
 func (e *Engine) markPollResult(ctx context.Context, siteID string, pollErr error) {
@@ -325,16 +331,4 @@ func (e *Engine) markNextPoll(ctx context.Context, siteID string, next time.Time
 		return
 	}
 	e.bus.Publish("site", site)
-}
-
-func (e *Engine) markAccountStatus(ctx context.Context, accountID string, status domain.AccountStatus, message string) {
-	account, err := e.updateAccount(ctx, accountID, func(account *domain.Account) {
-		account.Status = status
-		account.LastError = message
-		account.CheckedAt = time.Now().UTC()
-	})
-	if err == nil && status == domain.AccountExpired {
-		e.recordEvent(ctx, domain.Event{Type: domain.EventAccount, SiteID: account.SiteID, Title: "账号会话失效: " + account.Label, Detail: "请重新粘贴 Cookie，或给账号设置用户名密码以自动登录"},
-			&notify.Message{Title: "账号会话失效: " + account.Label, Body: "站点 " + account.SiteID + " 需要重新粘贴 Cookie，或设置用户名密码自动登录"})
-	}
 }

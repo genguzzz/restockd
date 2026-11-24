@@ -115,12 +115,12 @@ func TestShouldAutoOrder(t *testing.T) {
 func TestBuildSpecFallsBackToAccountDefaults(t *testing.T) {
 	watch := domain.Watch{ProductID: "1", Cycle: domain.CycleAnnually, Coupon: "C", OS: "", Qty: 0}
 	account := domain.Account{Defaults: domain.OrderDefaults{Gateway: "alipay", OS: "debian-12", SSHKey: "ssh-ed25519 AAA"}}
-	spec := BuildSpec(watch, account, true)
+	spec := withAccountDefaults(watchSpec(watch, true), account)
 	if spec.Gateway != "alipay" || spec.OS != "debian-12" || spec.SSHKey != "ssh-ed25519 AAA" || spec.Qty != 1 || !spec.DryRun || spec.Coupon != "C" {
 		t.Fatalf("unexpected spec %+v", spec)
 	}
 	watch.Gateway, watch.OS = "stripe", "ubuntu"
-	spec = BuildSpec(watch, account, false)
+	spec = withAccountDefaults(watchSpec(watch, false), account)
 	if spec.Gateway != "stripe" || spec.OS != "ubuntu" {
 		t.Fatalf("watch values must win: %+v", spec)
 	}
@@ -234,15 +234,18 @@ func TestEngineEndToEndAutoOrder(t *testing.T) {
 	defer engine.Stop()
 	capture := &captureNotifier{}
 	engine.Hub().SetNotifiers([]notify.Notifier{capture}, []string{"restock", "order"})
+	fakeState.mu.Lock()
+	fakeState.orders = nil
+	fakeState.mu.Unlock()
 	fakeState.set(product("41", domain.StockOut, 500), product("42", domain.StockOut, 900))
 	site, err := engine.SaveSite(ctx, domain.Site{ID: "fk", Kind: "fake", Name: "Fake", BaseURL: "https://fake.test", Enabled: true, Config: map[string]string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.PollNow(ctx, site.ID); err != nil {
+	if _, err := engine.PollNow(ctx, site.ID); err != nil {
 		t.Fatal(err)
 	}
-	account, err := engine.SaveAccount(ctx, domain.Account{SiteID: site.ID, Label: "main", Defaults: domain.OrderDefaults{Gateway: "alipay"}})
+	account, err := engine.SaveAccount(ctx, AccountInput{SiteID: site.ID, Label: "main", Defaults: domain.OrderDefaults{Gateway: "alipay"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +263,7 @@ func TestEngineEndToEndAutoOrder(t *testing.T) {
 		t.Fatal("auto order without account must be rejected")
 	}
 	fakeState.set(product("41", domain.StockIn, 500), product("42", domain.StockIn, 900))
-	if err := engine.PollNow(ctx, site.ID); err != nil {
+	if _, err := engine.PollNow(ctx, site.ID); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "auto order", func() bool {
@@ -276,7 +279,7 @@ func TestEngineEndToEndAutoOrder(t *testing.T) {
 		t.Fatalf("watch counters not updated: %+v", stored)
 	}
 	// 达到 max_orders 后再次轮询不再下单
-	if err := engine.PollNow(ctx, site.ID); err != nil {
+	if _, err := engine.PollNow(ctx, site.ID); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(200 * time.Millisecond)
@@ -316,10 +319,10 @@ func TestEngineManualOrderFailureRecorded(t *testing.T) {
 		fakeState.mu.Unlock()
 	}()
 	site, _ := engine.SaveSite(ctx, domain.Site{ID: "fk2", Kind: "fake", Name: "Fake2", BaseURL: "https://fake.test", Enabled: true, Config: map[string]string{}})
-	account, _ := engine.SaveAccount(ctx, domain.Account{SiteID: site.ID, Label: "main"})
+	account, _ := engine.SaveAccount(ctx, AccountInput{SiteID: site.ID, Label: "main"})
 	_, _ = engine.SetCookies(ctx, account.ID, []*http.Cookie{{Name: "sid", Value: "s1"}}, "")
 	watch, _ := engine.SaveWatch(ctx, domain.Watch{SiteID: site.ID, ProductID: "41", AccountID: account.ID, Enabled: true})
-	order, err := engine.OrderWatch(ctx, watch.ID, false)
+	order, err := engine.OrderWatch(ctx, watch.ID, false, true)
 	if !retryable(errors.New("transient")) || retryable(provider.ErrCouponInvalid) {
 		t.Fatal("retry classification wrong")
 	}

@@ -12,33 +12,8 @@ import (
 // 或最近 ViewerInterval 内有已登录的 API 请求）按 ViewerInterval，否则按 IdleInterval。
 // 有人开始访问时，无关注的站点立即刷一次（最近 viewerRefreshMin 内刚刷过的跳过）。
 
-const (
-	defaultIdleInterval   = time.Hour
-	defaultViewerInterval = 5 * time.Minute
-)
-
 // viewerRefreshMin 访问触发的即时刷新与上次轮询的最小间隔，避免刷新页面就打一轮站点（测试可调小）。
 var viewerRefreshMin = time.Minute
-
-// PollingSettings 无关注站点的降频策略；0 表示使用默认值。
-type PollingSettings struct {
-	IdleIntervalSec   int `json:"idle_interval_sec"`
-	ViewerIntervalSec int `json:"viewer_interval_sec"`
-}
-
-func (p PollingSettings) idle() time.Duration {
-	if p.IdleIntervalSec > 0 {
-		return time.Duration(p.IdleIntervalSec) * time.Second
-	}
-	return defaultIdleInterval
-}
-
-func (p PollingSettings) viewer() time.Duration {
-	if p.ViewerIntervalSec > 0 {
-		return time.Duration(p.ViewerIntervalSec) * time.Second
-	}
-	return defaultViewerInterval
-}
 
 type wakeKind int
 
@@ -56,11 +31,16 @@ type viewerTracker struct {
 	streams  int
 }
 
+// active SSE 连着或 window 内有请求；调用方持有 v.mu。
+func (v *viewerTracker) active(window time.Duration) bool {
+	return v.streams > 0 || time.Since(v.lastSeen) < window
+}
+
 // TouchViewer 已登录的 API 请求调用；从「无人访问」变为「有人访问」时唤醒各站点。
 func (e *Engine) TouchViewer() {
 	window := e.Settings().Polling.viewer()
 	e.viewers.mu.Lock()
-	wasActive := e.viewers.streams > 0 || time.Since(e.viewers.lastSeen) < window
+	wasActive := e.viewers.active(window)
 	e.viewers.lastSeen = time.Now()
 	e.viewers.mu.Unlock()
 	if !wasActive {
@@ -88,7 +68,7 @@ func (e *Engine) viewerActive() bool {
 	window := e.Settings().Polling.viewer()
 	e.viewers.mu.Lock()
 	defer e.viewers.mu.Unlock()
-	return e.viewers.streams > 0 || time.Since(e.viewers.lastSeen) < window
+	return e.viewers.active(window)
 }
 
 // wakeSites 非阻塞通知所有站点协程；协程忙时丢弃（它轮询完会按最新状态重新排期）。
@@ -137,12 +117,10 @@ func (e *Engine) siteInterval(ctx context.Context, runner *siteRunner) (time.Dur
 	if e.siteWatched(ctx, runner.site.ID) {
 		return base, true
 	}
-	lazy := e.Settings().Polling.idle()
+	polling := e.Settings().Polling
+	lazy := polling.idle()
 	if e.viewerActive() {
-		lazy = e.Settings().Polling.viewer()
+		lazy = polling.viewer()
 	}
-	if lazy < base {
-		lazy = base
-	}
-	return lazy, false
+	return max(lazy, base), false
 }

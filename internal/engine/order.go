@@ -1,19 +1,17 @@
 package engine
 
 import (
+	"cmp"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/genguzzz/restockd/internal/domain"
 	"github.com/genguzzz/restockd/internal/fetch"
-	"github.com/genguzzz/restockd/internal/notify"
 	"github.com/genguzzz/restockd/internal/provider"
 	"github.com/genguzzz/restockd/internal/solver"
+	"github.com/genguzzz/restockd/internal/store"
 )
 
 const (
@@ -23,29 +21,21 @@ const (
 	retryCooldown = 45 * time.Second
 	maxAttempts   = 3
 	attemptDelay  = 1500 * time.Millisecond
+	// duplicateWindow 手动真实下单的防重窗口：同一站点商品 + 账号在此期间已成功锁单则拒绝（force 除外）。
+	duplicateWindow = 24 * time.Hour
 )
 
-// ErrOrderInFlight 同一关注已有锁单在执行。
-var ErrOrderInFlight = errors.New("order already in flight for this watch")
-
-// ErrNoOrderer Provider 不支持下单。
-var ErrNoOrderer = errors.New("provider does not support ordering")
-
 // triggerWatches 对可下单商品的自动锁单关注异步执行锁单。
-func (e *Engine) triggerWatches(site domain.Site, products []domain.Product, watches []domain.Watch) {
-	byID := make(map[string]domain.Product, len(products))
-	for _, product := range products {
-		byID[product.ID] = product
-	}
+func (e *Engine) triggerWatches(site domain.Site, products map[string]domain.Product, watches []domain.Watch) {
 	for _, watch := range watches {
-		product, ok := byID[watch.ProductID]
+		product, ok := products[watch.ProductID]
 		if !ok || !e.shouldAutoOrder(watch, product) {
 			continue
 		}
 		e.wg.Add(1)
 		go func(watch domain.Watch, product domain.Product) {
 			defer e.wg.Done()
-			if _, err := e.executeOrder(e.rootCtx, site, watch, product, false, true); err != nil && !errors.Is(err, ErrOrderInFlight) {
+			if _, err := e.orderWatch(e.rootCtx, site, watch, product, false, true, false); err != nil && !errors.Is(err, ErrOrderInFlight) {
 				e.log.Warn("auto order failed", "watch", watch.ID, "err", err)
 			}
 		}(watch, product)
@@ -75,111 +65,102 @@ func withinPriceLimit(watch domain.Watch, product domain.Product) bool {
 	if !ok {
 		return false
 	}
-	return price.Amount.Cents*int64(maxInt(watch.Qty, 1)) <= watch.MaxPriceCents
+	return price.Amount.Cents*int64(max(watch.Qty, 1)) <= watch.MaxPriceCents
 }
 
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+// watchSpec 关注规则的下单参数（未合并账号默认值）。
+func watchSpec(watch domain.Watch, dryRun bool) domain.OrderSpec {
+	return domain.OrderSpec{ProductID: watch.ProductID, Cycle: watch.Cycle, Options: watch.Options, OS: watch.OS, Hostname: watch.Hostname, Coupon: watch.Coupon, Gateway: watch.Gateway, Qty: max(watch.Qty, 1), DryRun: dryRun}
 }
 
-func (e *Engine) watchMutex(watchID string) *sync.Mutex {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	lock, ok := e.orderLock[watchID]
-	if !ok {
-		lock = &sync.Mutex{}
-		e.orderLock[watchID] = lock
-	}
-	return lock
-}
-
-// BuildSpec 合并关注规则与账号默认值。
-func BuildSpec(watch domain.Watch, account domain.Account, dryRun bool) domain.OrderSpec {
-	spec := domain.OrderSpec{
-		ProductID: watch.ProductID,
-		Cycle:     watch.Cycle,
-		Options:   watch.Options,
-		OS:        firstNonEmpty(watch.OS, account.Defaults.OS),
-		Hostname:  firstNonEmpty(watch.Hostname, account.Defaults.Hostname),
-		SSHKey:    account.Defaults.SSHKey,
-		Coupon:    watch.Coupon,
-		Gateway:   firstNonEmpty(watch.Gateway, account.Defaults.Gateway),
-		Qty:       maxInt(watch.Qty, 1),
-		DryRun:    dryRun,
-	}
+// withAccountDefaults 未填写的系统 / 主机名 / SSH 公钥 / 支付方式回落到账号默认值。
+func withAccountDefaults(spec domain.OrderSpec, account domain.Account) domain.OrderSpec {
+	spec.OS = cmp.Or(spec.OS, account.Defaults.OS)
+	spec.Hostname = cmp.Or(spec.Hostname, account.Defaults.Hostname)
+	spec.SSHKey = cmp.Or(spec.SSHKey, account.Defaults.SSHKey)
+	spec.Gateway = cmp.Or(spec.Gateway, account.Defaults.Gateway)
 	return spec
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
+// orderWatch 按关注规则锁单；同一关注不并发。手动下单（非 force）做 24 小时防重，自动锁单由 MaxOrders / 冷却约束。
+func (e *Engine) orderWatch(ctx context.Context, site domain.Site, watch domain.Watch, product domain.Product, dryRun, automatic, force bool) (domain.Order, error) {
+	order := domain.Order{WatchID: watch.ID, AccountID: watch.AccountID, ProductID: product.ID, ProductName: cmp.Or(product.Name, watch.ProductName), Spec: watchSpec(watch, dryRun)}
+	return e.executeOrder(ctx, site, watchLockKey(watch.ID), order, automatic, !automatic && !force)
 }
 
-// executeOrder 锁单主流程：同一关注串行（TryLock，正在执行则直接返回）、记录订单、重试瞬时错误、通知结果。
-func (e *Engine) executeOrder(ctx context.Context, site domain.Site, watch domain.Watch, product domain.Product, dryRun, automatic bool) (domain.Order, error) {
-	lock := e.watchMutex(watch.ID)
+func watchLockKey(watchID string) string { return "watch:" + watchID }
+
+// executeOrder 锁单主流程：同一 lockKey 串行（TryLock，正在执行则直接返回 ErrOrderInFlight）；
+// 先建订单记录，之后任何失败都经 finishOrder 落为 failed、广播并记事件（自动锁单不会静默失败）。
+// order 由调用方填好关注 / 账号 / 商品与未合并账号默认值的 Spec；dedupe 时真实下单先查防重窗口（不建记录直接拒绝）。
+func (e *Engine) executeOrder(ctx context.Context, site domain.Site, lockKey string, order domain.Order, automatic, dedupe bool) (domain.Order, error) {
+	lock := e.orderLocks.Get(lockKey)
 	if !lock.TryLock() {
 		return domain.Order{}, ErrOrderInFlight
 	}
 	defer lock.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, orderTimeout)
-	defer cancel()
-	if automatic {
-		// 先记下触发时间，失败也进入冷却。
-		if err := e.touchWatch(ctx, watch.ID, false); err != nil {
+	if dedupe && !order.Spec.DryRun {
+		existing, err := e.store.LatestPlacedOrder(ctx, site.ID, order.ProductID, order.AccountID, time.Now().Add(-duplicateWindow))
+		if err == nil {
+			return domain.Order{}, &DuplicateOrderError{Existing: existing}
+		}
+		if !errors.Is(err, store.ErrNotFound) {
 			return domain.Order{}, err
 		}
 	}
-	account, err := e.store.GetAccount(ctx, watch.AccountID)
-	if err != nil {
-		return domain.Order{}, fmt.Errorf("load account: %w", err)
-	}
-	instance, err := e.providerFor(site)
-	if err != nil {
-		return domain.Order{}, err
-	}
-	orderer, ok := instance.(provider.Orderer)
-	if !ok {
-		return domain.Order{}, ErrNoOrderer
-	}
-	spec := BuildSpec(watch, account, dryRun)
-	order := domain.Order{ID: newID(), WatchID: watch.ID, SiteID: site.ID, AccountID: account.ID, ProductID: product.ID, ProductName: firstNonEmpty(product.Name, watch.ProductName), Spec: spec, Status: domain.OrderPending, CreatedAt: time.Now().UTC()}
-	if err := e.store.SaveOrder(ctx, order); err != nil {
-		return order, err
-	}
-	e.bus.Publish("order", order)
-	env, err := e.buildEnv(site, &account)
-	if err != nil {
-		return order, err
-	}
+	ctx, cancel := context.WithTimeout(ctx, orderTimeout)
+	defer cancel()
+	order.ID, order.SiteID, order.Status, order.CreatedAt = newID(), site.ID, domain.OrderPending, time.Now().UTC()
 	started := time.Now()
+	result, err := e.placeOrder(ctx, site, &order, automatic)
+	e.finishOrder(site, &order, result, err, started)
+	return order, err
+}
+
+// placeOrder 落 pending 记录、准备账号会话并下单，瞬时错误重试；order.Spec 补上账号默认值。
+func (e *Engine) placeOrder(ctx context.Context, site domain.Site, order *domain.Order, automatic bool) (domain.OrderResult, error) {
+	if err := e.store.SaveOrder(ctx, *order); err != nil {
+		return domain.OrderResult{}, err
+	}
+	e.bus.Publish("order", *order)
+	if automatic {
+		// 先记下触发时间，失败也进入冷却。
+		if err := e.touchWatch(ctx, order.WatchID, false); err != nil {
+			return domain.OrderResult{}, err
+		}
+	}
+	c, err := e.prepare(ctx, site, order.AccountID)
+	if err != nil {
+		return domain.OrderResult{}, fmt.Errorf("prepare: %w", err)
+	}
+	order.Spec = withAccountDefaults(order.Spec, *c.account)
+	orderer, ok := c.inst.(provider.Orderer)
+	if !ok {
+		return domain.OrderResult{}, ErrNoOrderer
+	}
 	var result domain.OrderResult
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		err = e.withSession(ctx, instance, &account, env, true, func() error {
+	for attempt := 1; ; attempt++ {
+		err = e.run(ctx, c, true, func() error {
 			var placeErr error
-			result, placeErr = orderer.PlaceOrder(ctx, env, spec)
+			result, placeErr = orderer.PlaceOrder(ctx, c.env, order.Spec)
 			return placeErr
 		})
 		if err == nil || !retryable(err) || attempt == maxAttempts {
-			break
+			return result, err
 		}
-		e.log.Info("order attempt failed, retrying", "watch", watch.ID, "attempt", attempt, "err", err)
+		e.log.Info("order attempt failed, retrying", "order", order.ID, "attempt", attempt, "err", err)
 		select {
 		case <-ctx.Done():
+			return result, err
 		case <-time.After(attemptDelay):
 		}
-		if ctx.Err() != nil {
-			break
-		}
 	}
-	e.persistSession(ctx, &account, env.Session)
+}
+
+// finishOrder 唯一的收尾路径：定状态、保存、广播、记事件与通知。
+func (e *Engine) finishOrder(site domain.Site, order *domain.Order, result domain.OrderResult, err error, started time.Time) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(e.rootCtx), 10*time.Second)
+	defer cancel()
 	order.DurationMs = time.Since(started).Milliseconds()
 	order.Result = result
 	switch {
@@ -187,24 +168,24 @@ func (e *Engine) executeOrder(ctx context.Context, site domain.Site, watch domai
 		order.Status = domain.OrderFailed
 		order.Error = err.Error()
 		if errors.Is(err, provider.ErrSessionExpired) {
-			e.markAccountStatus(ctx, account.ID, domain.AccountExpired, err.Error())
+			e.markAccountStatus(ctx, order.AccountID, domain.AccountExpired, err.Error())
 		}
-	case dryRun:
+	case order.Spec.DryRun:
 		order.Status = domain.OrderDryRun
 	default:
 		order.Status = domain.OrderPlaced
-		if touchErr := e.touchWatch(ctx, watch.ID, true); touchErr != nil {
-			e.log.Warn("update watch", "err", touchErr)
+		if order.WatchID != "" {
+			if touchErr := e.touchWatch(ctx, order.WatchID, true); touchErr != nil {
+				e.log.Warn("update watch", "err", touchErr)
+			}
 		}
 	}
-	saveCtx, saveCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer saveCancel()
-	if saveErr := e.store.SaveOrder(saveCtx, order); saveErr != nil {
+	if saveErr := e.store.SaveOrder(ctx, *order); saveErr != nil {
 		e.log.Warn("save order", "err", saveErr)
 	}
-	e.bus.Publish("order", order)
-	e.recordEvent(saveCtx, orderEvent(site, order), orderMessage(site, order))
-	return order, err
+	e.bus.Publish("order", *order)
+	event, message := orderNotice(site, *order)
+	e.recordEvent(ctx, event, message)
 }
 
 // retryable 缺货、会话失效、验证取消 / 超时、配置错误、站点限流等不重试（限流时重试只会延长封禁）。
@@ -213,113 +194,89 @@ func retryable(err error) bool {
 	if errors.As(err, &rateLimit) {
 		return false
 	}
-	switch {
-	case errors.Is(err, provider.ErrOutOfStock), errors.Is(err, provider.ErrSessionExpired), errors.Is(err, provider.ErrNotSupported), errors.Is(err, provider.ErrCouponInvalid), errors.Is(err, provider.ErrLoginFailed), errors.Is(err, ErrNoAuthenticator):
-		return false
-	case errors.Is(err, solver.ErrChallengeCancelled), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
-		return false
+	for _, permanent := range []error{provider.ErrOutOfStock, provider.ErrSessionExpired, provider.ErrNotSupported, provider.ErrCouponInvalid, provider.ErrLoginFailed,
+		ErrNoAuthenticator, ErrNoCredentials, errAutoLogin, solver.ErrChallengeCancelled, context.DeadlineExceeded, context.Canceled} {
+		if errors.Is(err, permanent) {
+			return false
+		}
 	}
 	return true
 }
 
-func orderEvent(site domain.Site, order domain.Order) domain.Event {
-	title := fmt.Sprintf("%s 锁单成功: %s", site.Name, order.ProductName)
-	detail := order.Result.PayURL
-	switch order.Status {
-	case domain.OrderFailed:
-		title = fmt.Sprintf("%s 锁单失败: %s", site.Name, order.ProductName)
-		detail = order.Error
-	case domain.OrderDryRun:
-		title = fmt.Sprintf("%s 试下单通过: %s", site.Name, order.ProductName)
-		detail = order.Result.Message
-	}
-	return domain.Event{Type: domain.EventOrder, SiteID: site.ID, ProductID: order.ProductID, Title: title, Detail: detail}
-}
-
-func orderMessage(site domain.Site, order domain.Order) *notify.Message {
-	event := orderEvent(site, order)
-	if order.Status == domain.OrderDryRun {
-		return nil
-	}
-	body := fmt.Sprintf("周期 %s · 数量 %d · 优惠码 %s\n应付 %s", order.Spec.Cycle, order.Spec.Qty, firstNonEmpty(order.Spec.Coupon, "无"), FormatMoney(order.Result.Total))
-	if order.Status == domain.OrderFailed {
-		body = order.Error
-	} else {
-		body += "\n订单 " + firstNonEmpty(order.Result.OrderID, "-") + " · 账单 " + firstNonEmpty(order.Result.InvoiceID, "-") + "，请尽快支付"
-	}
-	return &notify.Message{Title: event.Title, Body: body, URL: order.Result.PayURL}
-}
-
-// touchWatch 更新触发时间；placed 时累加成功次数。
-func (e *Engine) touchWatch(ctx context.Context, watchID string, placed bool) error {
-	e.docMu.Lock()
-	defer e.docMu.Unlock()
-	watch, err := e.store.GetWatch(ctx, watchID)
-	if err != nil {
-		return err
-	}
-	watch.LastTriggered = time.Now().UTC()
-	if placed {
-		watch.OrdersPlaced++
-	}
-	return e.store.SaveWatch(ctx, watch)
-}
-
-// providerFor 优先复用运行中的实例（保留 Inertia 版本等缓存）。
-func (e *Engine) providerFor(site domain.Site) (provider.Provider, error) {
-	e.mu.RLock()
-	runner, ok := e.sites[site.ID]
-	e.mu.RUnlock()
-	if ok {
-		return runner.provider, nil
-	}
-	return provider.New(site)
-}
-
-// OrderWatch 手动锁单 / 试下单。
-func (e *Engine) OrderWatch(ctx context.Context, watchID string, dryRun bool) (domain.Order, error) {
+// OrderWatch 手动锁单 / 试下单；force 跳过 24 小时防重。
+func (e *Engine) OrderWatch(ctx context.Context, watchID string, dryRun, force bool) (domain.Order, error) {
 	site, watch, product, err := e.loadWatch(ctx, watchID)
 	if err != nil {
 		return domain.Order{}, err
 	}
 	if watch.AccountID == "" {
-		return domain.Order{}, errors.New("watch has no account")
+		return domain.Order{}, ErrNoAccount
 	}
-	return e.executeOrder(ctx, site, watch, product, dryRun, false)
+	return e.orderWatch(ctx, site, watch, product, dryRun, false, force)
+}
+
+// ProductOrderInput 不经关注规则直接下单：账号 + 下单参数（ProductID 以路径为准），未填项回落账号默认值。
+type ProductOrderInput struct {
+	AccountID string `json:"account_id"`
+	// Force 跳过 24 小时防重。
+	Force bool `json:"force"`
+	domain.OrderSpec
+}
+
+// OrderProduct 直接对某商品锁单 / 试下单；同一站点 + 商品 + 账号不并发，真实下单做 24 小时防重（Force 除外）。
+func (e *Engine) OrderProduct(ctx context.Context, siteID, productID string, input ProductOrderInput) (domain.Order, error) {
+	site, err := e.store.GetSite(ctx, siteID)
+	if err != nil {
+		return domain.Order{}, err
+	}
+	product, err := e.store.GetProduct(ctx, siteID, productID)
+	if err != nil {
+		return domain.Order{}, err
+	}
+	if input.AccountID == "" {
+		return domain.Order{}, invalidf("account_id is required")
+	}
+	account, err := e.store.GetAccount(ctx, input.AccountID)
+	if err != nil {
+		return domain.Order{}, tagged{err: fmt.Errorf("account %s: %w", input.AccountID, err), tag: ErrInvalid}
+	}
+	if account.SiteID != site.ID {
+		return domain.Order{}, invalidf("account belongs to another site")
+	}
+	spec := input.OrderSpec
+	spec.ProductID, spec.Cycle, spec.Qty = productID, cmp.Or(spec.Cycle, domain.CycleMonthly), max(spec.Qty, 1)
+	if _, ok := product.PriceFor(spec.Cycle); !ok && len(product.Prices) > 0 {
+		return domain.Order{}, invalidf("cycle %s is not offered for this product", spec.Cycle)
+	}
+	order := domain.Order{AccountID: account.ID, ProductID: productID, ProductName: product.Name, Spec: spec}
+	return e.executeOrder(ctx, site, "product:"+site.ID+"/"+productID+"/"+account.ID, order, false, !input.Force)
 }
 
 // QuoteWatch 算价（校验优惠码）。
 func (e *Engine) QuoteWatch(ctx context.Context, watchID string) (domain.Quote, error) {
+	ctx, cancel := context.WithTimeout(ctx, e.interactiveTimeout())
+	defer cancel()
 	site, watch, _, err := e.loadWatch(ctx, watchID)
 	if err != nil {
 		return domain.Quote{}, err
 	}
 	if watch.AccountID == "" {
-		return domain.Quote{}, errors.New("watch has no account")
+		return domain.Quote{}, ErrNoAccount
 	}
-	account, err := e.store.GetAccount(ctx, watch.AccountID)
+	c, err := e.prepare(ctx, site, watch.AccountID)
 	if err != nil {
 		return domain.Quote{}, err
 	}
-	instance, err := e.providerFor(site)
-	if err != nil {
-		return domain.Quote{}, err
-	}
-	orderer, ok := instance.(provider.Orderer)
+	orderer, ok := c.inst.(provider.Orderer)
 	if !ok {
 		return domain.Quote{}, ErrNoOrderer
 	}
-	env, err := e.buildEnv(site, &account)
-	if err != nil {
-		return domain.Quote{}, err
-	}
 	var quote domain.Quote
-	err = e.withSession(ctx, instance, &account, env, true, func() error {
+	err = e.run(ctx, c, true, func() error {
 		var quoteErr error
-		quote, quoteErr = orderer.Quote(ctx, env, BuildSpec(watch, account, true))
+		quote, quoteErr = orderer.Quote(ctx, c.env, withAccountDefaults(watchSpec(watch, true), *c.account))
 		return quoteErr
 	})
-	e.persistSession(ctx, &account, env.Session)
 	return quote, err
 }
 
@@ -338,62 +295,3 @@ func (e *Engine) loadWatch(ctx context.Context, watchID string) (domain.Site, do
 	}
 	return site, watch, product, nil
 }
-
-// CheckAccount 校验会话并更新账号状态。
-func (e *Engine) CheckAccount(ctx context.Context, accountID string) (domain.Account, error) {
-	account, err := e.store.GetAccount(ctx, accountID)
-	if err != nil {
-		return domain.Account{}, err
-	}
-	site, err := e.store.GetSite(ctx, account.SiteID)
-	if err != nil {
-		return domain.Account{}, err
-	}
-	instance, err := e.providerFor(site)
-	if err != nil {
-		return domain.Account{}, err
-	}
-	checker, ok := instance.(provider.SessionChecker)
-	if !ok {
-		// 不能校验但能登录：校验即登录。
-		if _, canLogin := authenticator(instance, &account); canLogin {
-			return e.LoginAccount(ctx, accountID)
-		}
-		return account, provider.ErrNotSupported
-	}
-	env, err := e.buildEnv(site, &account)
-	if err != nil {
-		return domain.Account{}, err
-	}
-	var info provider.SessionInfo
-	checkErr := e.withSession(ctx, instance, &account, env, true, func() error {
-		var err error
-		info, err = checker.CheckSession(ctx, env)
-		return err
-	})
-	e.persistSession(ctx, &account, env.Session)
-	return e.updateAccount(ctx, accountID, func(stored *domain.Account) {
-		stored.CheckedAt = time.Now().UTC()
-		if checkErr != nil {
-			stored.Status = domain.AccountUnknown
-			if errors.Is(checkErr, provider.ErrSessionExpired) || errors.Is(checkErr, provider.ErrLoginFailed) {
-				stored.Status = domain.AccountExpired
-			}
-			stored.LastError = checkErr.Error()
-			return
-		}
-		stored.Status = domain.AccountActive
-		stored.LastError = ""
-		stored.Identity = info.Identity
-		stored.Balance = info.Balance
-	})
-}
-
-func newID() string {
-	buf := make([]byte, 6)
-	_, _ = rand.Read(buf)
-	return hex.EncodeToString(buf)
-}
-
-// NewID 对外的短 ID 生成。
-func NewID() string { return newID() }
