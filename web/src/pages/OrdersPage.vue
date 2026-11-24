@@ -3,44 +3,28 @@
 import { computed, h, onMounted, ref } from 'vue'
 import { NButton, NCard, NDataTable, NEllipsis, NIcon, NTag, NText, type DataTableColumns } from 'naive-ui'
 import { OpenOutline, RefreshOutline } from '@vicons/ionicons5'
-import { ordersApi, sitesApi } from '@/api'
-import type { Order, OrderStatus, Site } from '@/api/types'
+import { ordersApi } from '@/api'
+import type { Order } from '@/api/types'
 import { useAsync } from '@/composables/useAsync'
 import { onLive } from '@/composables/useLive'
+import { useSites } from '@/composables/useSites'
 import { formatDateTime } from '@/utils/format'
+import { metaOf, orderStatusMeta } from '@/utils/labels'
+import { upsertById } from '@/utils/list'
 import PageHeader from '@/components/PageHeader.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import CycleLabel from '@/components/CycleLabel.vue'
 
-type TagType = 'success' | 'info' | 'warning' | 'error' | 'default'
-
-const statusMeta: Record<OrderStatus, { type: TagType; label: string }> = {
-  placed: { type: 'success', label: '已锁单' },
-  dry_run: { type: 'info', label: '试下单' },
-  pending: { type: 'warning', label: '进行中' },
-  failed: { type: 'error', label: '失败' },
-}
-
 const orders = ref<Order[]>([])
-const sites = ref<Site[]>([])
-const siteNames = computed<Record<string, string>>(() => Object.fromEntries(sites.value.map((site) => [site.id, site.name])))
+const { siteNames } = useSites()
 const { loading, run } = useAsync(async () => {
-  const [orderList, siteList] = await Promise.all([ordersApi.list(200), sitesApi.list()])
-  orders.value = orderList
-  sites.value = siteList
-  return orderList
+  orders.value = await ordersApi.list(200)
+  return orders.value
 })
 
 // 实时推送：按 id 更新，新订单插到最前
 onLive('order', (order) => {
-  const index = orders.value.findIndex((item) => item.id === order.id)
-  if (index >= 0) {
-    const next = [...orders.value]
-    next[index] = order
-    orders.value = next
-  } else {
-    orders.value = [order, ...orders.value]
-  }
+  orders.value = upsertById(orders.value, order, { prepend: true })
 })
 
 const ellipsis = (text: string, maxWidth: number) => h(NEllipsis, { style: `max-width: ${maxWidth}px` }, { default: () => text })
@@ -61,7 +45,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
     key: 'status',
     width: 90,
     render: (row) => {
-      const meta = statusMeta[row.status] ?? { type: 'default' as TagType, label: row.status }
+      const meta = metaOf(orderStatusMeta, row.status)
       return h(NTag, { type: meta.type, size: 'small', bordered: false }, { default: () => meta.label })
     },
   },
@@ -84,7 +68,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
         ? h(
             NButton,
             { tag: 'a', href: row.result.pay_url, target: '_blank', rel: 'noopener noreferrer', size: 'tiny', type: 'primary', secondary: true },
-            { default: () => '去支付', icon: () => h(NIcon, null, { default: () => h(OpenOutline) }) },
+            { default: () => '去付款', icon: () => h(NIcon, null, { default: () => h(OpenOutline) }) },
           )
         : '-',
   },

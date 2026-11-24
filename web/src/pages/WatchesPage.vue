@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 关注与锁单页：关注规则列表、内联开关、算价 / 试下单 / 立即锁单 / 编辑 / 删除
+// 关注与锁单页：关注规则列表、内联开关、算价 / 试下单 / 立即锁单（防重复）/ 编辑 / 删除
 import { useIsMobile } from '@/composables/useIsMobile'
 import { computed, h, onMounted, ref } from 'vue'
 import {
@@ -16,46 +16,39 @@ import {
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import { accountsApi, productsApi, sitesApi, watchesApi } from '@/api'
-import type { Account, Order, OrderStatus, Product, Quote, Site, Watch, WatchInput } from '@/api/types'
+import { accountsApi, productsApi, watchesApi } from '@/api'
+import type { Account, Order, Product, Quote, Watch, WatchInput } from '@/api/types'
+import { useAction, useAsync, useBusy } from '@/composables/useAsync'
 import { onLive } from '@/composables/useLive'
+import { priorOfProduct, useOrderPlacer } from '@/composables/useOrderPlacer'
+import { useSites } from '@/composables/useSites'
+import { removeById, upsertById } from '@/utils/list'
 import ConfirmButton from '@/components/ConfirmButton.vue'
 import CycleLabel from '@/components/CycleLabel.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import OrderResultModal from '@/components/OrderResultModal.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TimeAgo from '@/components/TimeAgo.vue'
 import WatchFormDrawer from '@/components/WatchFormDrawer.vue'
 
 type ToggleField = 'auto_order' | 'enabled'
 
-const orderStatusLabels: Record<OrderStatus, string> = { pending: '进行中', placed: '已下单', dry_run: '试下单', failed: '失败' }
-const orderStatusTypes: Record<OrderStatus, 'default' | 'success' | 'info' | 'error'> = {
-  pending: 'default',
-  placed: 'success',
-  dry_run: 'info',
-  failed: 'error',
-}
-
 const message = useMessage()
+const act = useAction()
+const place = useOrderPlacer()
+const { isBusy, track } = useBusy()
+const { siteNames } = useSites()
 const watches = ref<Watch[]>([])
-const sites = ref<Site[]>([])
 const accounts = ref<Account[]>([])
 const products = ref<Product[]>([])
-const loading = ref(false)
-const toggling = ref<Record<string, boolean>>({})
-const busy = ref<Record<string, boolean>>({})
 const drawerShow = ref(false)
 const editing = ref<Watch | null>(null)
-const quoteShow = ref(false)
 const quote = ref<Quote | null>(null)
-const orderShow = ref(false)
 const order = ref<Order | null>(null)
 
-const siteNames = computed<Record<string, string>>(() => Object.fromEntries(sites.value.map((site) => [site.id, site.name])))
 const accountLabels = computed<Record<string, string>>(() => Object.fromEntries(accounts.value.map((item) => [item.id, item.label])))
 const productMap = computed<Map<string, Product>>(() => new Map(products.value.map((item) => [`${item.site_id}/${item.id}`, item])))
 
-const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 const productOf = (row: Watch): Product | undefined => productMap.value.get(`${row.site_id}/${row.product_id}`)
 const currencyOf = (row: Watch): string | null => {
   const product = productOf(row)
@@ -69,27 +62,19 @@ function toInput(row: Watch): WatchInput {
   return input
 }
 
-async function loadWatches(): Promise<void> {
-  loading.value = true
-  try {
-    watches.value = await watchesApi.list()
-  } catch (err) {
-    message.error(errorMessage(err))
-  } finally {
-    loading.value = false
-  }
-}
+const { loading, run: loadWatches } = useAsync(async () => {
+  watches.value = await watchesApi.list()
+  return watches.value
+})
 
 async function loadLookups(): Promise<void> {
-  const [siteList, accountList, productList] = await Promise.allSettled([sitesApi.list(), accountsApi.list(), productsApi.list()])
-  if (siteList.status === 'fulfilled') sites.value = siteList.value
+  const [accountList, productList] = await Promise.allSettled([accountsApi.list(), productsApi.list()])
   if (accountList.status === 'fulfilled') accounts.value = accountList.value
   if (productList.status === 'fulfilled') products.value = productList.value
 }
 
 function replaceWatch(saved: Watch): void {
-  const exists = watches.value.some((item) => item.id === saved.id)
-  watches.value = exists ? watches.value.map((item) => (item.id === saved.id ? saved : item)) : [saved, ...watches.value]
+  watches.value = upsertById(watches.value, saved, { prepend: true })
 }
 
 // 内联开关：先乐观更新，失败回滚
@@ -98,64 +83,35 @@ async function toggle(row: Watch, field: ToggleField, value: boolean): Promise<v
     message.warning('请先编辑该关注并选择下单账号')
     return
   }
-  const previous = row[field]
-  const key = `${row.id}:${field}`
-  toggling.value = { ...toggling.value, [key]: true }
   replaceWatch({ ...row, [field]: value })
-  try {
-    const saved = await watchesApi.update(row.id, { ...toInput(row), [field]: value })
-    replaceWatch(saved)
-  } catch (err) {
-    replaceWatch({ ...row, [field]: previous })
-    message.error(errorMessage(err))
-  } finally {
-    toggling.value = { ...toggling.value, [key]: false }
-  }
-}
-
-async function withBusy<T>(key: string, fn: () => Promise<T>): Promise<T | null> {
-  busy.value = { ...busy.value, [key]: true }
-  try {
-    return await fn()
-  } catch (err) {
-    message.error(errorMessage(err))
-    return null
-  } finally {
-    busy.value = { ...busy.value, [key]: false }
-  }
+  const saved = await track(`${row.id}:${field}`, () => act(() => watchesApi.update(row.id, { ...toInput(row), [field]: value })))
+  replaceWatch(saved ?? row)
 }
 
 async function runQuote(row: Watch): Promise<void> {
-  const result = await withBusy(`${row.id}:quote`, () => watchesApi.quote(row.id))
-  if (!result) return
-  quote.value = result
-  quoteShow.value = true
+  const result = await track(`${row.id}:quote`, () => act(() => watchesApi.quote(row.id)))
+  if (result) quote.value = result
 }
 
+// 立即锁单已由 ConfirmButton 确认；24 小时内重复锁单或后端 409 时再确认一次并带 force
 async function runOrder(row: Watch, dryRun: boolean): Promise<void> {
-  const result = await withBusy(`${row.id}:${dryRun ? 'dry' : 'order'}`, () => watchesApi.order(row.id, dryRun))
+  const product = productOf(row)
+  const result = await track(`${row.id}:${dryRun ? 'dry' : 'order'}`, () =>
+    place((force) => watchesApi.order(row.id, dryRun, force), { dryRun, prior: product ? priorOfProduct(product) : null }),
+  )
   if (!result) return
   order.value = result
-  orderShow.value = true
-  if (!dryRun) void loadWatches()
-}
-
-async function removeWatch(row: Watch): Promise<void> {
-  try {
-    await watchesApi.remove(row.id)
-    watches.value = watches.value.filter((item) => item.id !== row.id)
-    message.success('已删除')
-  } catch (err) {
-    message.error(errorMessage(err))
+  if (!dryRun) {
+    void loadWatches()
+    void loadLookups()
   }
 }
 
-function openCreate(): void {
-  editing.value = null
-  drawerShow.value = true
+async function removeWatch(row: Watch): Promise<void> {
+  if (await act(() => watchesApi.remove(row.id), '已删除')) watches.value = removeById(watches.value, row.id)
 }
 
-function openEdit(row: Watch): void {
+function openDrawer(row: Watch | null): void {
   editing.value = row
   drawerShow.value = true
 }
@@ -218,7 +174,7 @@ const columns = computed<DataTableColumns<Watch>>(() => [
       h(NSwitch, {
         size: 'small',
         value: row.auto_order,
-        loading: toggling.value[`${row.id}:auto_order`] === true,
+        loading: isBusy(`${row.id}:auto_order`),
         onUpdateValue: (value: boolean) => void toggle(row, 'auto_order', value),
       }),
   },
@@ -230,7 +186,7 @@ const columns = computed<DataTableColumns<Watch>>(() => [
       h(NSwitch, {
         size: 'small',
         value: row.enabled,
-        loading: toggling.value[`${row.id}:enabled`] === true,
+        loading: isBusy(`${row.id}:enabled`),
         onUpdateValue: (value: boolean) => void toggle(row, 'enabled', value),
       }),
   },
@@ -257,11 +213,11 @@ const columns = computed<DataTableColumns<Watch>>(() => [
     fixed: isMobile.value ? undefined : 'right',
     render: (row) =>
       h(NSpace, { size: 6, wrap: true }, () => [
-        h(NButton, { size: 'small', onClick: () => openEdit(row) }, () => '编辑'),
-        h(NButton, { size: 'small', secondary: true, loading: busy.value[`${row.id}:quote`] === true, onClick: () => void runQuote(row) }, () => '算价'),
+        h(NButton, { size: 'small', onClick: () => openDrawer(row) }, () => '编辑'),
+        h(NButton, { size: 'small', secondary: true, loading: isBusy(`${row.id}:quote`), onClick: () => void runQuote(row) }, () => '算价'),
         h(
           NButton,
-          { size: 'small', secondary: true, type: 'info', loading: busy.value[`${row.id}:dry`] === true, onClick: () => void runOrder(row, true) },
+          { size: 'small', secondary: true, type: 'info', loading: isBusy(`${row.id}:dry`), onClick: () => void runOrder(row, true) },
           () => '试下单',
         ),
         h(ConfirmButton, {
@@ -280,7 +236,7 @@ const columns = computed<DataTableColumns<Watch>>(() => [
 <template>
   <div class="page">
     <page-header title="关注与锁单" subtitle="补货时通知，并可按规则自动锁单（创建未支付订单）">
-      <n-button type="primary" @click="openCreate">新建关注</n-button>
+      <n-button type="primary" @click="openDrawer(null)">新建关注</n-button>
     </page-header>
 
     <n-card size="small" :content-style="{ padding: 0 }">
@@ -296,7 +252,7 @@ const columns = computed<DataTableColumns<Watch>>(() => [
         <template #empty>
           <n-space vertical align="center" :size="8" style="padding: 24px 0">
             <n-text depth="3">还没有关注，可在商品页点「关注」或直接新建</n-text>
-            <n-button size="small" type="primary" secondary @click="openCreate">新建关注</n-button>
+            <n-button size="small" type="primary" secondary @click="openDrawer(null)">新建关注</n-button>
           </n-space>
         </template>
       </n-data-table>
@@ -304,7 +260,7 @@ const columns = computed<DataTableColumns<Watch>>(() => [
 
     <watch-form-drawer v-model:show="drawerShow" :watch="editing" @saved="onSaved" />
 
-    <n-modal v-model:show="quoteShow" preset="card" title="算价结果" style="width: min(420px, 94vw)">
+    <n-modal :show="quote !== null" preset="card" title="算价结果" style="width: min(420px, 94vw)" @update:show="(value: boolean) => !value && (quote = null)">
       <n-descriptions v-if="quote" :column="1" label-placement="left" bordered size="small">
         <n-descriptions-item label="小计"><money-text :money="quote.subtotal" /></n-descriptions-item>
         <n-descriptions-item label="优惠"><money-text :money="quote.discount" /></n-descriptions-item>
@@ -318,27 +274,6 @@ const columns = computed<DataTableColumns<Watch>>(() => [
       </n-descriptions>
     </n-modal>
 
-    <n-modal v-model:show="orderShow" preset="card" title="下单结果" style="width: min(480px, 94vw)">
-      <n-descriptions v-if="order" :column="1" label-placement="left" bordered size="small">
-        <n-descriptions-item label="状态">
-          <n-tag size="small" :type="orderStatusTypes[order.status] ?? 'default'" :bordered="false">
-            {{ orderStatusLabels[order.status] ?? order.status }}
-          </n-tag>
-        </n-descriptions-item>
-        <n-descriptions-item label="金额"><money-text :money="order.result.total" strong /></n-descriptions-item>
-        <n-descriptions-item v-if="order.result.order_id" label="订单号">{{ order.result.order_id }}</n-descriptions-item>
-        <n-descriptions-item v-if="order.result.invoice_id" label="账单号">{{ order.result.invoice_id }}</n-descriptions-item>
-        <n-descriptions-item v-if="order.result.message" label="说明">{{ order.result.message }}</n-descriptions-item>
-        <n-descriptions-item v-if="order.error" label="错误">
-          <n-text type="error" style="word-break: break-all">{{ order.error }}</n-text>
-        </n-descriptions-item>
-        <n-descriptions-item label="耗时">{{ order.duration_ms }} ms</n-descriptions-item>
-      </n-descriptions>
-      <template v-if="order?.result.pay_url" #footer>
-        <n-space justify="end">
-          <n-button tag="a" type="primary" :href="order.result.pay_url" target="_blank" rel="noopener noreferrer">去支付</n-button>
-        </n-space>
-      </template>
-    </n-modal>
+    <OrderResultModal :order="order" @close="order = null" />
   </div>
 </template>

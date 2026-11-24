@@ -2,27 +2,19 @@
 // 登录页：单管理员密码
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NCard, NForm, NFormItem, NInput, NText, useMessage } from 'naive-ui'
+import { NButton, NCard, NForm, NFormItem, NInput, NText } from 'naive-ui'
 import { authApi } from '@/api'
+import { useAsync } from '@/composables/useAsync'
 
 const password = ref('')
-const loading = ref(false)
 const router = useRouter()
 const route = useRoute()
-const message = useMessage()
+const { loading, run: login } = useAsync(() => authApi.login(password.value))
 
 const submit = async () => {
-  if (!password.value) return
-  loading.value = true
-  try {
-    await authApi.login(password.value)
-    const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') ? route.query.redirect : '/'
-    await router.replace(redirect)
-  } catch (err) {
-    message.error(err instanceof Error ? err.message : String(err))
-  } finally {
-    loading.value = false
-  }
+  if (!password.value || !(await login())) return
+  const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') ? route.query.redirect : '/'
+  await router.replace(redirect)
 }
 </script>
 

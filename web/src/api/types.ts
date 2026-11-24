@@ -16,7 +16,7 @@ export type BillingCycle =
 
 export type StockStatus = 'in_stock' | 'out_of_stock' | 'preorder' | 'closed' | 'unknown'
 export type FetchMode = 'direct' | 'flaresolverr'
-export type AccountStatus = 'unknown' | 'active' | 'expired' | 'rate_limited'
+export type AccountStatus = 'unknown' | 'active' | 'expired'
 export type OrderStatus = 'pending' | 'placed' | 'dry_run' | 'failed'
 export type EventType =
   | 'restock'
@@ -27,7 +27,7 @@ export type EventType =
   | 'challenge'
   | 'poll_error'
   | 'account'
-export type ChallengeKind = 'cloudflare' | 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha'
+export type ChallengeKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha'
 export type FieldType = 'text' | 'list' | 'bool' | 'password'
 
 export interface ProviderField {
@@ -49,7 +49,7 @@ export interface ProviderMeta {
     coupon: boolean
     order: boolean
     session_check: boolean
-    login?: boolean
+    login: boolean
     stock_needs_login: boolean
   }
   default_fetch_mode: FetchMode
@@ -71,18 +71,23 @@ export interface Site {
   egress?: string[]
   monitor_account_id?: string
   enabled: boolean
-  last_poll_at?: string
+  /** Go time.Time 总会返回，零值 0001-01-01T00:00:00Z 表示从未 / 未排期，用 hasTime 判断 */
+  last_poll_at: string
   last_error?: string
-  next_poll_at?: string
+  /** 同 last_poll_at，零值表示未排期 */
+  next_poll_at: string
   consecutive_fail: number
   product_count: number
   in_stock_count: number
+  /** 被屏蔽的商品 ID（列表默认不返回这些商品） */
+  hidden_products?: string[]
+  hidden_count: number
 }
 
 export type SiteInput = Pick<
   Site,
   'kind' | 'name' | 'base_url' | 'config' | 'interval_sec' | 'fetch_mode' | 'egress' | 'monitor_account_id' | 'enabled'
-> & { id?: string }
+>
 
 export interface Choice {
   value: string
@@ -134,6 +139,20 @@ export interface Product {
   no_discount?: boolean
   fetched_at: string
   watched: boolean
+  /** 仅 include_hidden=1 时出现：已被屏蔽 */
+  hidden?: boolean
+  /** 该商品最近一次下单（含试下单），没有时为空 */
+  last_order?: LastOrder | null
+  /** 最近一次真实锁单时间，零值表示从未（hasTime 判断） */
+  last_placed_at: string
+}
+
+export interface LastOrder {
+  status: OrderStatus
+  created_at: string
+  pay_url?: string
+  invoice_id?: string
+  error?: string
 }
 
 export interface OrderDefaults {
@@ -151,7 +170,8 @@ export interface Account {
   status: AccountStatus
   identity?: string
   balance?: Money
-  checked_at?: string
+  /** 零值表示从未校验（hasTime 判断） */
+  checked_at: string
   last_error?: string
   defaults: OrderDefaults
   created_at: string
@@ -159,13 +179,13 @@ export interface Account {
   /** 托管登录用户名；密码永不回传，只有 has_password */
   username?: string
   has_password: boolean
-  login_at?: string
+  /** 零值表示从未自动登录（hasTime 判断） */
+  login_at: string
   /** 站点拒绝了当前密码，自动登录已暂停 */
   credentials_rejected?: boolean
 }
 
 export interface AccountInput {
-  id?: string
   site_id: string
   label: string
   user_agent?: string
@@ -197,12 +217,11 @@ export interface Watch {
   notify: boolean
   enabled: boolean
   created_at: string
-  last_triggered?: string
+  /** 零值表示从未触发（hasTime 判断） */
+  last_triggered: string
 }
 
-export type WatchInput = Omit<Watch, 'id' | 'orders_placed' | 'created_at' | 'last_triggered' | 'product_name'> & {
-  id?: string
-}
+export type WatchInput = Omit<Watch, 'id' | 'orders_placed' | 'created_at' | 'last_triggered' | 'product_name'>
 
 export interface Quote {
   subtotal: Money
@@ -223,6 +242,21 @@ export interface OrderSpec {
   gateway?: string
   qty: number
   dry_run: boolean
+}
+
+/** 商品直接下单（POST /api/sites/{site_id}/products/{product_id}/order） */
+export interface ProductOrderInput {
+  account_id: string
+  cycle: BillingCycle
+  options?: Record<string, string>
+  os?: string
+  hostname?: string
+  coupon?: string
+  gateway?: string
+  qty: number
+  dry_run: boolean
+  /** 24 小时内已锁过单时需显式确认再下一单，否则后端返回 409 */
+  force?: boolean
 }
 
 export interface OrderResult {
@@ -295,9 +329,9 @@ export interface Settings {
   }
   bark: { enabled: boolean; device_urls: string; group: string; sound: string; icon: string }
   solver: { flaresolverr_url: string; external_url: string; external_token: string; manual_timeout_sec: number }
-  /** 无关注站点的降频：无人访问 idle、有人访问 viewer（秒，0 为默认 3600 / 300） */
+  /** 无关注站点的降频：无人访问 idle、有人访问 viewer（秒） */
   polling: { idle_interval_sec: number; viewer_interval_sec: number }
-  /** 出口线路：登记的代理 + 未单独指定出口的站点使用的默认优先级 */
+  /** 出口：登记的代理 + 未单独指定出口的站点使用的默认优先级（Go 可能返回 null，由 settingsApi 统一补齐） */
   egress: { proxies: EgressProxy[]; default: string[] }
   notify_events: EventType[]
 }
@@ -337,4 +371,6 @@ export interface StreamEvents {
   challenge: PendingChallenge
   challenge_done: { id: string }
   order: Order
+  /** 账号状态变化，数据同 GET /api/accounts 的列表项 */
+  account: Account
 }

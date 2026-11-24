@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 人工验证收件箱：自动求解失败时在此手动提交 token / Cookie，实时增删并显示倒计时
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+// 人工验证收件箱：自动求解失败时在此手动提交 token（可附 Cookie / UA），实时增删并显示倒计时
+import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   NButton,
   NCard,
@@ -18,11 +18,15 @@ import {
   useMessage,
 } from 'naive-ui'
 import { CopyOutline, RefreshOutline } from '@vicons/ionicons5'
-import { challengesApi, sitesApi } from '@/api'
-import type { ChallengeKind, PendingChallenge, Site } from '@/api/types'
-import { useAction, useAsync } from '@/composables/useAsync'
+import { challengesApi } from '@/api'
+import type { ChallengeKind, PendingChallenge } from '@/api/types'
+import { useAction, useAsync, useBusy } from '@/composables/useAsync'
 import { onLive } from '@/composables/useLive'
+import { useSites } from '@/composables/useSites'
 import { formatDateTime } from '@/utils/format'
+import { challengeKindMeta, metaOf } from '@/utils/labels'
+import { upsertById } from '@/utils/list'
+import UserAgentInput from '@/components/UserAgentInput.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import ConfirmButton from '@/components/ConfirmButton.vue'
 
@@ -34,16 +38,7 @@ interface SolveForm {
 
 const URGENT_SECONDS = 60
 
-const kindLabels: Record<ChallengeKind, string> = {
-  cloudflare: 'Cloudflare 质询',
-  turnstile: 'Turnstile',
-  recaptcha_v2: 'reCAPTCHA v2',
-  recaptcha_v3: 'reCAPTCHA v3',
-  hcaptcha: 'hCaptcha',
-}
-
 const kindHelp: Record<ChallengeKind, string> = {
-  cloudflare: '在浏览器打开页面通过 Cloudflare 验证后，粘贴含 cf_clearance 的 Cookie 和获取时使用的 UA（需与本服务器同一出口 IP 才有效）。',
   turnstile: '在目标站点页面完成验证后，从开发者工具复制 cf-turnstile-response 的值。',
   recaptcha_v2: '在目标站点页面勾选验证后，从开发者工具复制 g-recaptcha-response 的值。',
   recaptcha_v3: '在目标站点页面触发操作后，从开发者工具复制 g-recaptcha-response（或 grecaptcha.execute 返回）的 token。',
@@ -52,11 +47,10 @@ const kindHelp: Record<ChallengeKind, string> = {
 
 const message = useMessage()
 const act = useAction()
+const { isBusy, track } = useBusy()
+const { siteNames } = useSites()
 const challenges = ref<PendingChallenge[]>([])
-const sites = ref<Site[]>([])
-const siteNames = computed<Record<string, string>>(() => Object.fromEntries(sites.value.map((site) => [site.id, site.name])))
 const forms = reactive<Record<string, SolveForm>>({})
-const submitting = ref<string | null>(null)
 const now = ref(Date.now())
 const timer = setInterval(() => {
   now.value = Date.now()
@@ -77,10 +71,8 @@ const emptyForm: SolveForm = { token: '', cookies: '', userAgent: '' }
 const formOf = (id: string): SolveForm => forms[id] ?? emptyForm
 
 const { loading, run } = useAsync(async () => {
-  const [list, siteList] = await Promise.all([challengesApi.list(), sitesApi.list().catch(() => [] as Site[])])
-  challenges.value = list
-  sites.value = siteList
-  return list
+  challenges.value = await challengesApi.list()
+  return challenges.value
 })
 
 const removeLocal = (id: string) => {
@@ -89,12 +81,9 @@ const removeLocal = (id: string) => {
 }
 
 onLive('challenge', (pending) => {
-  if (challenges.value.some((item) => item.id === pending.id)) return
-  challenges.value = [pending, ...challenges.value]
+  challenges.value = upsertById(challenges.value, pending, { prepend: true })
 })
 onLive('challenge_done', ({ id }) => removeLocal(id))
-
-const isCookieKind = (kind: ChallengeKind) => kind === 'cloudflare'
 
 // 剩余秒数（未设置过期时间返回 null）
 const remainingSeconds = (pending: PendingChallenge): number | null => {
@@ -119,10 +108,6 @@ const copy = async (text: string) => {
   }
 }
 
-const fillBrowserUA = (id: string) => {
-  formOf(id).userAgent = navigator.userAgent
-}
-
 const canSubmit = (id: string): boolean => {
   const form = formOf(id)
   return Boolean(form.token.trim() || form.cookies.trim())
@@ -134,17 +119,12 @@ const submit = async (pending: PendingChallenge) => {
     message.warning('请至少填写 token 或 Cookie')
     return
   }
-  submitting.value = pending.id
-  const result = await act(
-    () =>
-      challengesApi.solve(pending.id, {
-        token: form.token.trim() || undefined,
-        cookies_raw: form.cookies.trim() || undefined,
-        user_agent: form.userAgent.trim() || undefined,
-      }),
-    '已提交，任务继续执行',
-  )
-  submitting.value = null
+  const input = {
+    token: form.token.trim() || undefined,
+    cookies_raw: form.cookies.trim() || undefined,
+    user_agent: form.userAgent.trim() || undefined,
+  }
+  const result = await track(pending.id, () => act(() => challengesApi.solve(pending.id, input), '已提交，任务继续执行'))
   if (result) removeLocal(pending.id)
 }
 
@@ -174,7 +154,9 @@ onMounted(() => {
         <n-card v-for="pending in challenges" :key="pending.id" size="small">
           <template #header>
             <n-space align="center" :size="8" :wrap="true">
-              <n-tag type="warning" size="small" :bordered="false">{{ kindLabels[pending.challenge.kind] ?? pending.challenge.kind }}</n-tag>
+              <n-tag :type="metaOf(challengeKindMeta, pending.challenge.kind).type" size="small" :bordered="false">
+                {{ metaOf(challengeKindMeta, pending.challenge.kind).label }}
+              </n-tag>
               <span class="purpose">{{ pending.challenge.purpose || '待验证' }}</span>
             </n-space>
           </template>
@@ -217,40 +199,17 @@ onMounted(() => {
           </div>
           <n-text depth="3" class="help">{{ kindHelp[pending.challenge.kind] }}</n-text>
           <n-form label-placement="top" size="small" class="solve-form">
-            <template v-if="isCookieKind(pending.challenge.kind)">
-              <n-form-item label="Cookie">
-                <n-input v-model:value="formOf(pending.id).cookies" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" placeholder="cf_clearance=...; ..." />
-              </n-form-item>
-              <n-form-item label="User-Agent">
-                <n-input v-model:value="formOf(pending.id).userAgent" placeholder="获取 Cookie 时的浏览器 UA">
-                  <template #suffix>
-                    <n-button text size="tiny" @click="fillBrowserUA(pending.id)">用当前浏览器</n-button>
-                  </template>
-                </n-input>
-              </n-form-item>
-            </template>
-            <n-form-item v-else label="Token">
+            <n-form-item label="Token">
               <n-input v-model:value="formOf(pending.id).token" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" placeholder="粘贴验证 token" />
             </n-form-item>
             <n-collapse>
               <n-collapse-item title="更多" :name="`more-${pending.id}`">
-                <template v-if="isCookieKind(pending.challenge.kind)">
-                  <n-form-item label="Token">
-                    <n-input v-model:value="formOf(pending.id).token" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" placeholder="可选" />
-                  </n-form-item>
-                </template>
-                <template v-else>
-                  <n-form-item label="Cookie">
-                    <n-input v-model:value="formOf(pending.id).cookies" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" placeholder="可选" />
-                  </n-form-item>
-                  <n-form-item label="User-Agent">
-                    <n-input v-model:value="formOf(pending.id).userAgent" placeholder="可选">
-                      <template #suffix>
-                        <n-button text size="tiny" @click="fillBrowserUA(pending.id)">用当前浏览器</n-button>
-                      </template>
-                    </n-input>
-                  </n-form-item>
-                </template>
+                <n-form-item label="Cookie">
+                  <n-input v-model:value="formOf(pending.id).cookies" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" placeholder="可选" />
+                </n-form-item>
+                <n-form-item label="User-Agent">
+                  <UserAgentInput v-model:value="formOf(pending.id).userAgent" placeholder="可选" />
+                </n-form-item>
               </n-collapse-item>
             </n-collapse>
           </n-form>
@@ -261,7 +220,7 @@ onMounted(() => {
                 type="primary"
                 size="small"
                 :disabled="!canSubmit(pending.id)"
-                :loading="submitting === pending.id"
+                :loading="isBusy(pending.id)"
                 @click="submit(pending)"
               >
                 提交
