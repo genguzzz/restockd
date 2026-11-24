@@ -1,4 +1,5 @@
-// Package engine 监控引擎：每站点一个调度协程轮询目录、比对快照产生事件、匹配关注规则、执行自动锁单与通知。
+// Package engine 监控引擎：每站点一个调度协程轮询目录（无关注的站点按需降频）、比对快照产生事件、
+// 匹配关注规则、执行自动锁单、托管账号会话与自动登录、通知。
 package engine
 
 import (
@@ -6,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -19,44 +21,17 @@ import (
 	"github.com/genguzzz/restockd/internal/store"
 )
 
-// SettingsKey 设置在 settings 表中的键。
-const SettingsKey = "app"
-
-// SolverSettings 验证码求解设置。
-type SolverSettings struct {
-	FlareSolverrURL  string `json:"flaresolverr_url"`
-	ExternalURL      string `json:"external_url"`
-	ExternalToken    string `json:"external_token"`
-	ManualTimeoutSec int    `json:"manual_timeout_sec"`
-}
-
-// Settings 全局设置。
-type Settings struct {
-	Telegram     notify.TelegramConfig `json:"telegram"`
-	Email        notify.EmailConfig    `json:"email"`
-	Bark         notify.BarkConfig     `json:"bark"`
-	Solver       SolverSettings        `json:"solver"`
-	Polling      PollingSettings       `json:"polling"`
-	Egress       egress.Settings       `json:"egress"`
-	NotifyEvents []string              `json:"notify_events"`
-}
-
-// DefaultSettings 初始设置。
-func DefaultSettings() Settings {
-	return Settings{
-		Email:        notify.EmailConfig{Port: 587, StartTLS: true},
-		Solver:       SolverSettings{FlareSolverrURL: "http://127.0.0.1:8191", ManualTimeoutSec: 300},
-		Polling:      PollingSettings{IdleIntervalSec: int(defaultIdleInterval / time.Second), ViewerIntervalSec: int(defaultViewerInterval / time.Second)},
-		NotifyEvents: []string{string(domain.EventRestock), string(domain.EventOrder), string(domain.EventChallenge), string(domain.EventAccount)},
-	}
-}
+const (
+	httpTimeout = 30 * time.Second
+	// eventRetention / orderRetention 定期清理的保留期。
+	eventRetention = 30 * 24 * time.Hour
+	orderRetention = 90 * 24 * time.Hour
+)
 
 // Options 引擎构造参数。
 type Options struct {
-	Store       *store.Store
-	Log         *slog.Logger
-	HTTPTimeout time.Duration
-	ProxyURL    string
+	Store *store.Store
+	Log   *slog.Logger
 	// PublicURL 本服务对外地址，用于通知里的跳转链接（如人工验证收件箱）。
 	PublicURL string
 }
@@ -70,22 +45,25 @@ type Engine struct {
 	broker    *solver.ManualBroker
 	publicURL string
 
-	direct *fetch.DirectClient
 	// egress 出口登记表（直连 + 设置里的代理）与共享冷却状态。
 	egress       *egress.Registry
 	egressHealth *egress.Health
 
+	// 锁顺序：docMu → mu，反之不允许。
 	mu       sync.RWMutex
 	settings Settings
 	flare    *fetch.FlareSolverrClient
 	solver   solver.Solver
 	sites    map[string]*siteRunner
 	sessions map[string]*fetch.Session
-	viewers  viewerTracker
-	// loginLocks 每个账号一把锁，串行化自动登录。
-	loginLocks map[string]*sync.Mutex
-	orderLock  map[string]*sync.Mutex
-	docMu      sync.Mutex
+	// loginPauses 账号自动登录冷却截止时间（非密码错误的登录失败后）。
+	loginPauses map[string]time.Time
+	// docMu 串行化库中文档的读改写（账号、站点、关注）。
+	docMu   sync.Mutex
+	viewers viewerTracker
+	// orderLocks 每个关注一把（同一关注不并发锁单）；loginLocks 每个账号一把（串行化登录）。
+	orderLocks keyedMutex
+	loginLocks keyedMutex
 
 	rootCtx context.Context
 	cancel  context.CancelFunc
@@ -94,11 +72,7 @@ type Engine struct {
 
 // New 构造引擎；调用 Start 后开始调度。
 func New(options Options) (*Engine, error) {
-	timeout := options.HTTPTimeout
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
-	direct, err := fetch.NewDirectClient(timeout, options.ProxyURL)
+	direct, err := fetch.NewDirectClient(httpTimeout, "")
 	if err != nil {
 		return nil, err
 	}
@@ -111,14 +85,13 @@ func New(options Options) (*Engine, error) {
 		log:          logger,
 		bus:          NewBus(),
 		hub:          notify.NewHub(),
-		broker:       solver.NewManualBroker(5 * time.Minute),
+		broker:       solver.NewManualBroker(defaultManualTimeout),
 		publicURL:    strings.TrimRight(options.PublicURL, "/"),
-		direct:       direct,
-		egress:       egress.NewRegistry(direct, timeout),
+		egress:       egress.NewRegistry(direct, httpTimeout),
 		egressHealth: egress.NewHealth(),
 		sites:        map[string]*siteRunner{},
 		sessions:     map[string]*fetch.Session{},
-		orderLock:    map[string]*sync.Mutex{},
+		loginPauses:  map[string]time.Time{},
 	}
 	engine.broker.OnNew = engine.onChallenge
 	engine.broker.OnDone = func(id string) { engine.bus.Publish("challenge_done", map[string]string{"id": id}) }
@@ -131,6 +104,9 @@ func (e *Engine) Bus() *Bus { return e.bus }
 // Broker 人工验证收件箱。
 func (e *Engine) Broker() *solver.ManualBroker { return e.broker }
 
+// Hub 通知分发器（测试中替换通知通道）。
+func (e *Engine) Hub() *notify.Hub { return e.hub }
+
 // Start 载入设置并为每个启用站点启动调度协程。
 func (e *Engine) Start(ctx context.Context) error {
 	e.rootCtx, e.cancel = context.WithCancel(ctx)
@@ -138,14 +114,11 @@ func (e *Engine) Start(ctx context.Context) error {
 	if err := e.store.GetSetting(ctx, SettingsKey, &settings); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("load settings: %w", err)
 	}
+	e.ApplySettings(settings)
 	sites, err := e.store.ListSites(ctx)
 	if err != nil {
 		return err
 	}
-	if sites, err = e.migrateSiteProxies(ctx, &settings, sites); err != nil {
-		return err
-	}
-	e.ApplySettings(settings)
 	for _, site := range sites {
 		if err := e.ReloadSite(site); err != nil {
 			e.log.Warn("site not started", "site", site.ID, "err", err)
@@ -156,7 +129,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop 停止所有调度并等待退出。
+// Stop 停止所有调度与在途通知并等待退出。
 func (e *Engine) Stop() {
 	if e.cancel != nil {
 		e.cancel()
@@ -164,7 +137,7 @@ func (e *Engine) Stop() {
 	e.wg.Wait()
 }
 
-// housekeeping 定期清理 30 天前的事件。
+// housekeeping 定期清理过期的事件与订单记录。
 func (e *Engine) housekeeping() {
 	defer e.wg.Done()
 	ticker := time.NewTicker(6 * time.Hour)
@@ -174,29 +147,21 @@ func (e *Engine) housekeeping() {
 		case <-e.rootCtx.Done():
 			return
 		case <-ticker.C:
-			if err := e.store.PruneEvents(e.rootCtx, time.Now().Add(-30*24*time.Hour)); err != nil {
+			if err := e.store.PruneEvents(e.rootCtx, time.Now().Add(-eventRetention)); err != nil {
 				e.log.Warn("prune events", "err", err)
+			}
+			if err := e.store.PruneOrders(e.rootCtx, time.Now().Add(-orderRetention)); err != nil {
+				e.log.Warn("prune orders", "err", err)
 			}
 		}
 	}
 }
 
-// Settings 当前设置副本。
-func (e *Engine) Settings() Settings {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.settings
-}
-
-// ApplySettings 热更新通知通道与 Solver 链：外部服务 → FlareSolverr → 人工兜底。
+// ApplySettings 热更新出口、通知通道与 Solver 链：外部服务 → FlareSolverr → 人工兜底。
 func (e *Engine) ApplySettings(settings Settings) {
 	e.egress.Apply(settings.Egress)
 	e.hub.Apply(notify.Settings{Telegram: settings.Telegram, Email: settings.Email, Bark: settings.Bark, Events: settings.NotifyEvents})
-	timeout := time.Duration(settings.Solver.ManualTimeoutSec) * time.Second
-	if timeout <= 0 {
-		timeout = 5 * time.Minute
-	}
-	e.broker.SetTimeout(timeout)
+	e.broker.SetTimeout(settings.Solver.manualTimeout())
 	var flare *fetch.FlareSolverrClient
 	chain := solver.Chain{}
 	if settings.Solver.ExternalURL != "" {
@@ -214,21 +179,12 @@ func (e *Engine) ApplySettings(settings Settings) {
 	e.mu.Unlock()
 }
 
-// SaveSettings 持久化并应用。
-func (e *Engine) SaveSettings(ctx context.Context, settings Settings) error {
-	if err := e.store.PutSetting(ctx, SettingsKey, settings); err != nil {
-		return err
-	}
-	e.ApplySettings(settings)
-	return nil
+// interactiveTimeout 界面触发的登录 / 校验 / 报价的超时：留足人工验证的等待时间。
+func (e *Engine) interactiveTimeout() time.Duration {
+	return max(e.Settings().Solver.manualTimeout()+time.Minute, 2*time.Minute)
 }
 
-// TestNotify 向所有启用通道发送测试消息。
-func (e *Engine) TestNotify(ctx context.Context) map[string]error {
-	return e.hub.Notify(ctx, notify.Message{Title: "restockd 测试通知", Body: "如果你看到这条消息，说明通知通道配置正确。"})
-}
-
-// clientFor 按站点抓取模式选择客户端；未配置 FlareSolverr 时退化为直连。
+// clientFor 按站点出口与抓取模式选择客户端；未配置 FlareSolverr 时退化为直连。
 func (e *Engine) clientFor(site domain.Site) fetch.Client {
 	e.mu.RLock()
 	flare := e.flare
@@ -253,165 +209,61 @@ func (c errClient) Do(context.Context, *fetch.Session, *fetch.Request) (*fetch.R
 	return nil, c.err
 }
 
-// migrateSiteProxies 把旧版站点单一 proxy 迁移为出口登记表中的代理 + 站点出口优先级。
-func (e *Engine) migrateSiteProxies(ctx context.Context, settings *Settings, sites []domain.Site) ([]domain.Site, error) {
-	changed := false
-	for i, site := range sites {
-		if site.Proxy == "" {
-			continue
-		}
-		id := "site-" + site.ID
-		exists := false
-		for _, proxy := range settings.Egress.Proxies {
-			if proxy.URL == site.Proxy {
-				id, exists = proxy.ID, true
-				break
-			}
-		}
-		if !exists {
-			settings.Egress.Proxies = append(settings.Egress.Proxies, egress.Proxy{ID: id, Name: site.Name + " 专用", URL: site.Proxy, Enabled: true})
-		}
-		if len(site.Egress) == 0 {
-			site.Egress = []string{id}
-		}
-		site.Proxy = ""
-		if err := e.store.SaveSite(ctx, site); err != nil {
-			return nil, err
-		}
-		sites[i] = site
-		changed = true
-		e.log.Info("migrated site proxy to egress", "site", site.ID, "egress", id)
-	}
-	if changed {
-		if err := e.store.PutSetting(ctx, SettingsKey, *settings); err != nil {
-			return nil, err
-		}
-	}
-	return sites, nil
-}
-
-// EgressRoute 单个出口（设置页测试连通性用）。
-func (e *Engine) EgressRoute(id string) (egress.Route, error) { return e.egress.Route(id) }
-
 func (e *Engine) currentSolver() solver.Solver {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.solver
 }
 
-// sessionFor 账号会话缓存：首次从库中 Cookie 构建，之后复用以保留站点刷新的 Cookie。
-// accountID 为空时返回站点级匿名会话（保留 cf_clearance 等）。
-func (e *Engine) sessionFor(site domain.Site, account *domain.Account) (*fetch.Session, error) {
-	key := "anon:" + site.ID
-	if account != nil {
-		key = "acct:" + account.ID
-	}
+// providerFor 优先复用运行中的实例（保留 Inertia 版本等缓存）。
+func (e *Engine) providerFor(site domain.Site) (provider.Provider, error) {
 	e.mu.RLock()
-	session, ok := e.sessions[key]
+	runner, ok := e.sites[site.ID]
 	e.mu.RUnlock()
 	if ok {
-		return session, nil
+		return runner.provider, nil
 	}
-	var err error
-	if account != nil {
-		session, err = fetch.NewSession(site.BaseURL, account.Cookies, account.UserAgent)
-	} else {
-		session, err = fetch.NewSession(site.BaseURL, nil, "")
-	}
+	return provider.New(site)
+}
+
+// EgressProbe 出口连通性测试结果（经该出口访问 Cloudflare trace）。
+type EgressProbe struct {
+	OK    bool   `json:"ok"`
+	IP    string `json:"ip,omitempty"`
+	Loc   string `json:"loc,omitempty"`
+	Colo  string `json:"colo,omitempty"`
+	Ms    int64  `json:"ms,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+// TestEgress 经指定出口访问 Cloudflare trace。出口不存在返回 ErrInvalid；请求失败记在 probe.Error。
+func (e *Engine) TestEgress(ctx context.Context, id string) (EgressProbe, error) {
+	route, err := e.egress.Route(id)
 	if err != nil {
-		return nil, err
+		return EgressProbe{}, tagged{err: err, tag: ErrInvalid}
 	}
-	e.mu.Lock()
-	if existing, ok := e.sessions[key]; ok {
-		session = existing
-	} else {
-		e.sessions[key] = session
-	}
-	e.mu.Unlock()
-	return session, nil
-}
-
-// ResetSession 账号 Cookie 被替换后丢弃缓存会话。
-func (e *Engine) ResetSession(accountID string) {
-	e.mu.Lock()
-	delete(e.sessions, "acct:"+accountID)
-	e.mu.Unlock()
-}
-
-// buildEnv 组装一次 Provider 调用的环境。
-func (e *Engine) buildEnv(site domain.Site, account *domain.Account) (provider.Env, error) {
-	session, err := e.sessionFor(site, account)
+	ctx, cancel := context.WithTimeout(ctx, httpTimeout)
+	defer cancel()
+	session, err := fetch.NewSession("https://www.cloudflare.com", nil, "")
 	if err != nil {
-		return provider.Env{}, err
+		return EgressProbe{}, err
 	}
-	return provider.Env{Site: site, Client: e.clientFor(site), Session: session, Account: account, Solver: e.currentSolver(), Log: e.log.With("site", site.ID)}, nil
-}
-
-// persistSession 把会话中最新 Cookie 写回账号（站点会滚动刷新 laravel_session / cf_clearance）。
-func (e *Engine) persistSession(ctx context.Context, account *domain.Account, session *fetch.Session) {
-	if account == nil || session == nil {
-		return
+	started := time.Now()
+	resp, err := route.Client.Do(ctx, session, &fetch.Request{Method: http.MethodGet, URL: "https://www.cloudflare.com/cdn-cgi/trace"})
+	if err != nil {
+		return EgressProbe{Error: err.Error()}, nil
 	}
-	e.updateAccount(ctx, account.ID, func(stored *domain.Account) {
-		stored.Cookies = session.Cookies()
-		if session.UserAgent() != "" && session.UserAgent() != fetch.DefaultUserAgent {
-			stored.UserAgent = session.UserAgent()
+	probe := EgressProbe{OK: true, Ms: time.Since(started).Milliseconds()}
+	for _, line := range strings.Split(string(resp.Body), "\n") {
+		key, value, _ := strings.Cut(line, "=")
+		switch key {
+		case "ip":
+			probe.IP = value
+		case "loc":
+			probe.Loc = value
+		case "colo":
+			probe.Colo = value
 		}
-	})
-}
-
-// updateAccount 串行化账号读改写，避免调度与 API 同时写覆盖。
-func (e *Engine) updateAccount(ctx context.Context, id string, mutate func(*domain.Account)) (domain.Account, error) {
-	e.docMu.Lock()
-	defer e.docMu.Unlock()
-	account, err := e.store.GetAccount(ctx, id)
-	if err != nil {
-		return domain.Account{}, err
 	}
-	mutate(&account)
-	account.SyncCookieNames()
-	if err := e.store.SaveAccount(ctx, account); err != nil {
-		return domain.Account{}, err
-	}
-	return account, nil
+	return probe, nil
 }
-
-// UpdateAccount 对外暴露的串行化更新。
-func (e *Engine) UpdateAccount(ctx context.Context, id string, mutate func(*domain.Account)) (domain.Account, error) {
-	return e.updateAccount(ctx, id, mutate)
-}
-
-// recordEvent 写库、广播，并按类型发送通知。
-func (e *Engine) recordEvent(ctx context.Context, event domain.Event, message *notify.Message) {
-	if err := e.store.AddEvent(ctx, &event); err != nil {
-		e.log.Warn("save event", "err", err)
-	}
-	e.bus.Publish("event", event)
-	if message == nil {
-		return
-	}
-	message.Event = string(event.Type)
-	go func() {
-		notifyCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		for channel, err := range e.hub.Notify(notifyCtx, *message) {
-			if err != nil {
-				e.log.Warn("notify failed", "channel", channel, "err", err)
-			}
-		}
-	}()
-}
-
-// onChallenge 人工验证挂起：推送界面并通知用户去处理。
-func (e *Engine) onChallenge(pending solver.Pending) {
-	e.bus.Publish("challenge", pending)
-	link := ""
-	if e.publicURL != "" {
-		link = e.publicURL + "/challenges"
-	}
-	e.recordEvent(context.Background(), domain.Event{Type: domain.EventChallenge, SiteID: pending.Challenge.SiteID, Title: "需要人工验证: " + pending.Challenge.Purpose, Detail: fmt.Sprintf("%s，%s 前处理", pending.Challenge.Kind, pending.ExpiresAt.Local().Format("15:04:05"))},
-		&notify.Message{Title: "需要人工验证 " + string(pending.Challenge.Kind), Body: pending.Challenge.Purpose + "\n请在过期前打开收件箱粘贴 token / Cookie", URL: link})
-}
-
-// Hub 通知分发器（测试中替换通知通道）。
-func (e *Engine) Hub() *notify.Hub { return e.hub }

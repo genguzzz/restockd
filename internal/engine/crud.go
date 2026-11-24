@@ -2,10 +2,12 @@ package engine
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,20 +16,22 @@ import (
 	"github.com/genguzzz/restockd/internal/store"
 )
 
+// 站点与关注规则的增删改。读改写都持有 docMu，与调度 / 锁单的写入互斥。
+
 // SaveSite 校验并保存站点配置，保留运行时状态字段，随后重启调度。
 func (e *Engine) SaveSite(ctx context.Context, site domain.Site) (domain.Site, error) {
 	meta, ok := provider.Lookup(site.Kind)
 	if !ok {
-		return domain.Site{}, fmt.Errorf("unknown provider kind %q", site.Kind)
+		return domain.Site{}, invalidf("unknown provider kind %q", site.Kind)
 	}
 	parsed, err := url.Parse(site.BaseURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return domain.Site{}, fmt.Errorf("invalid base_url %q", site.BaseURL)
+		return domain.Site{}, invalidf("invalid base_url %q", site.BaseURL)
 	}
 	site.BaseURL = strings.TrimRight(site.BaseURL, "/")
 	for _, field := range meta.ConfigFields {
 		if field.Required && strings.TrimSpace(site.Config[field.Key]) == "" {
-			return domain.Site{}, fmt.Errorf("config %s (%s) is required", field.Key, field.Label)
+			return domain.Site{}, invalidf("config %s (%s) is required", field.Key, field.Label)
 		}
 	}
 	if site.FetchMode == "" {
@@ -37,48 +41,90 @@ func (e *Engine) SaveSite(ctx context.Context, site domain.Site) (domain.Site, e
 		site.ID = newID()
 	}
 	if _, err := provider.New(site); err != nil {
-		return domain.Site{}, err
+		return domain.Site{}, tagged{err: err, tag: ErrInvalid}
 	}
-	e.docMu.Lock()
-	if existing, err := e.store.GetSite(ctx, site.ID); err == nil {
-		site.LastPollAt, site.LastError, site.NextPollAt, site.ConsecutiveFail = existing.LastPollAt, existing.LastError, existing.NextPollAt, existing.ConsecutiveFail
-	} else if !errors.Is(err, store.ErrNotFound) {
-		e.docMu.Unlock()
-		return domain.Site{}, err
-	}
-	err = e.store.SaveSite(ctx, site)
-	e.docMu.Unlock()
-	if err != nil {
+	if err := e.saveSite(ctx, &site); err != nil {
 		return domain.Site{}, err
 	}
 	return site, e.ReloadSite(site)
 }
 
-// DeleteSite 停止调度并级联删除。
+func (e *Engine) saveSite(ctx context.Context, site *domain.Site) error {
+	e.docMu.Lock()
+	defer e.docMu.Unlock()
+	if site.MonitorAccount != "" {
+		account, err := e.store.GetAccount(ctx, site.MonitorAccount)
+		if err != nil {
+			return tagged{err: fmt.Errorf("monitor account %s: %w", site.MonitorAccount, err), tag: ErrInvalid}
+		}
+		if account.SiteID != site.ID {
+			return invalidf("monitor account belongs to another site")
+		}
+	}
+	site.HiddenProducts = nil // 只经 SetProductHidden 修改
+	if existing, err := e.store.GetSite(ctx, site.ID); err == nil {
+		site.LastPollAt, site.LastError, site.NextPollAt, site.ConsecutiveFail = existing.LastPollAt, existing.LastError, existing.NextPollAt, existing.ConsecutiveFail
+		site.HiddenProducts = existing.HiddenProducts
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return e.store.SaveSite(ctx, *site)
+}
+
+// SetProductHidden 隐藏 / 取消隐藏站点下的商品，返回更新后的站点。
+func (e *Engine) SetProductHidden(ctx context.Context, siteID, productID string, hidden bool) (domain.Site, error) {
+	e.docMu.Lock()
+	defer e.docMu.Unlock()
+	site, err := e.store.GetSite(ctx, siteID)
+	if err != nil {
+		return domain.Site{}, err
+	}
+	site.HiddenProducts = slices.DeleteFunc(slices.Clone(site.HiddenProducts), func(id string) bool { return id == productID })
+	if hidden {
+		site.HiddenProducts = append(site.HiddenProducts, productID)
+	}
+	if err := e.store.SaveSite(ctx, site); err != nil {
+		return domain.Site{}, err
+	}
+	e.bus.Publish("site", site)
+	return site, nil
+}
+
+// DeleteSite 停止调度，级联删除站点下的账号、关注与商品，并清理它们的缓存会话与锁。
 func (e *Engine) DeleteSite(ctx context.Context, siteID string) error {
 	e.StopSite(siteID)
-	return e.store.DeleteSite(ctx, siteID)
+	e.docMu.Lock()
+	defer e.docMu.Unlock()
+	accounts, err := e.store.ListAccounts(ctx, siteID)
+	if err != nil {
+		return err
+	}
+	watches, err := e.store.ListWatches(ctx, siteID)
+	if err != nil {
+		return err
+	}
+	if err := e.store.DeleteSite(ctx, siteID); err != nil {
+		return err
+	}
+	for _, account := range accounts {
+		e.forgetAccount(account.ID)
+	}
+	for _, watch := range watches {
+		e.orderLocks.Delete(watchLockKey(watch.ID))
+	}
+	e.mu.Lock()
+	delete(e.sessions, "anon:"+siteID)
+	e.mu.Unlock()
+	return nil
 }
 
 // SaveWatch 校验并保存关注规则，保留计数类运行时字段。
 func (e *Engine) SaveWatch(ctx context.Context, watch domain.Watch) (domain.Watch, error) {
-	if _, err := e.store.GetSite(ctx, watch.SiteID); err != nil {
-		return domain.Watch{}, fmt.Errorf("site %s: %w", watch.SiteID, err)
-	}
 	if watch.ProductID == "" {
-		return domain.Watch{}, errors.New("product_id is required")
-	}
-	if watch.AccountID != "" {
-		account, err := e.store.GetAccount(ctx, watch.AccountID)
-		if err != nil {
-			return domain.Watch{}, fmt.Errorf("account %s: %w", watch.AccountID, err)
-		}
-		if account.SiteID != watch.SiteID {
-			return domain.Watch{}, errors.New("account belongs to another site")
-		}
+		return domain.Watch{}, invalidf("product_id is required")
 	}
 	if watch.AutoOrder && watch.AccountID == "" {
-		return domain.Watch{}, errors.New("auto_order requires an account")
+		return domain.Watch{}, invalidf("auto_order requires an account")
 	}
 	if watch.Qty <= 0 {
 		watch.Qty = 1
@@ -86,20 +132,31 @@ func (e *Engine) SaveWatch(ctx context.Context, watch domain.Watch) (domain.Watc
 	if watch.Cycle == "" {
 		watch.Cycle = domain.CycleMonthly
 	}
+	e.docMu.Lock()
+	defer e.docMu.Unlock()
+	if _, err := e.store.GetSite(ctx, watch.SiteID); err != nil {
+		return domain.Watch{}, tagged{err: fmt.Errorf("site %s: %w", watch.SiteID, err), tag: ErrInvalid}
+	}
+	if watch.AccountID != "" {
+		account, err := e.store.GetAccount(ctx, watch.AccountID)
+		if err != nil {
+			return domain.Watch{}, tagged{err: fmt.Errorf("account %s: %w", watch.AccountID, err), tag: ErrInvalid}
+		}
+		if account.SiteID != watch.SiteID {
+			return domain.Watch{}, invalidf("account belongs to another site")
+		}
+	}
 	if product, err := e.store.GetProduct(ctx, watch.SiteID, watch.ProductID); err == nil {
 		watch.ProductName = product.Name
 	}
 	if watch.ID == "" {
 		watch.ID = newID()
 		watch.CreatedAt = time.Now().UTC()
-	}
-	e.docMu.Lock()
-	defer e.docMu.Unlock()
-	if existing, err := e.store.GetWatch(ctx, watch.ID); err == nil {
+	} else if existing, err := e.store.GetWatch(ctx, watch.ID); err == nil {
 		watch.CreatedAt, watch.OrdersPlaced, watch.LastTriggered = existing.CreatedAt, existing.OrdersPlaced, existing.LastTriggered
 	}
 	if err := e.store.SaveWatch(ctx, watch); err != nil {
-		return watch, err
+		return domain.Watch{}, err
 	}
 	e.RescheduleSite(watch.SiteID)
 	return watch, nil
@@ -107,6 +164,8 @@ func (e *Engine) SaveWatch(ctx context.Context, watch domain.Watch) (domain.Watc
 
 // DeleteWatch 删除关注规则并让站点按新间隔重排（可能降频）。
 func (e *Engine) DeleteWatch(ctx context.Context, watchID string) error {
+	e.docMu.Lock()
+	defer e.docMu.Unlock()
 	watch, err := e.store.GetWatch(ctx, watchID)
 	if err != nil {
 		return err
@@ -114,54 +173,28 @@ func (e *Engine) DeleteWatch(ctx context.Context, watchID string) error {
 	if err := e.store.DeleteWatch(ctx, watchID); err != nil {
 		return err
 	}
+	e.orderLocks.Delete(watchLockKey(watchID))
 	e.RescheduleSite(watch.SiteID)
 	return nil
 }
 
-// SaveAccount 新建或更新账号基础信息（不改 Cookie）。
-func (e *Engine) SaveAccount(ctx context.Context, account domain.Account) (domain.Account, error) {
-	if _, err := e.store.GetSite(ctx, account.SiteID); err != nil {
-		return domain.Account{}, fmt.Errorf("site %s: %w", account.SiteID, err)
+// touchWatch 更新触发时间；placed 时累加成功次数。
+func (e *Engine) touchWatch(ctx context.Context, watchID string, placed bool) error {
+	e.docMu.Lock()
+	defer e.docMu.Unlock()
+	watch, err := e.store.GetWatch(ctx, watchID)
+	if err != nil {
+		return err
 	}
-	if account.ID == "" {
-		account.ID = newID()
-		account.CreatedAt = time.Now().UTC()
-		account.Status = domain.AccountUnknown
-		account.Cookies = nil
-		account.SyncCookieNames()
-		e.docMu.Lock()
-		defer e.docMu.Unlock()
-		return account, e.store.SaveAccount(ctx, account)
+	watch.LastTriggered = time.Now().UTC()
+	if placed {
+		watch.OrdersPlaced++
 	}
-	updated, err := e.updateAccount(ctx, account.ID, func(stored *domain.Account) {
-		stored.Label = account.Label
-		stored.UserAgent = account.UserAgent
-		stored.Defaults = account.Defaults
-	})
-	if err == nil {
-		e.ResetSession(account.ID)
-	}
-	return updated, err
+	return e.store.SaveWatch(ctx, watch)
 }
 
-// SetCookies 替换账号 Cookie（手动粘贴），并重置会话缓存。
-func (e *Engine) SetCookies(ctx context.Context, accountID string, cookies []*http.Cookie, userAgent string) (domain.Account, error) {
-	account, err := e.updateAccount(ctx, accountID, func(stored *domain.Account) {
-		stored.Cookies = cookies
-		if userAgent != "" {
-			stored.UserAgent = userAgent
-		}
-		stored.Status = domain.AccountUnknown
-		stored.LastError = ""
-	})
-	if err == nil {
-		e.ResetSession(accountID)
-	}
-	return account, err
-}
-
-// DeleteAccount 删除账号与会话缓存。
-func (e *Engine) DeleteAccount(ctx context.Context, accountID string) error {
-	e.ResetSession(accountID)
-	return e.store.DeleteAccount(ctx, accountID)
+func newID() string {
+	buf := make([]byte, 6)
+	_, _ = rand.Read(buf)
+	return hex.EncodeToString(buf)
 }

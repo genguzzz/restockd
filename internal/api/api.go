@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/genguzzz/restockd/internal/engine"
+	"github.com/genguzzz/restockd/internal/provider"
 	"github.com/genguzzz/restockd/internal/store"
 )
 
@@ -104,6 +105,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/sites/{id}", s.auth(s.handleDeleteSite))
 	s.mux.HandleFunc("POST /api/sites/{id}/poll", s.auth(s.handlePollSite))
 	s.mux.HandleFunc("GET /api/sites/{id}/products", s.auth(s.handleListProducts))
+	s.mux.HandleFunc("POST /api/sites/{id}/products/{product_id}/order", s.auth(s.handleOrderProduct))
+	s.mux.HandleFunc("POST /api/sites/{id}/products/{product_id}/hide", s.auth(s.handleHideProduct(true)))
+	s.mux.HandleFunc("POST /api/sites/{id}/products/{product_id}/unhide", s.auth(s.handleHideProduct(false)))
 	s.mux.HandleFunc("GET /api/products", s.auth(s.handleListProducts))
 	s.mux.HandleFunc("GET /api/accounts", s.auth(s.handleListAccounts))
 	s.mux.HandleFunc("POST /api/accounts", s.auth(s.handleSaveAccount))
@@ -266,13 +270,21 @@ func decode(w http.ResponseWriter, r *http.Request, out any) bool {
 	return true
 }
 
-// writeStoreError 把 ErrNotFound 映射为 404，其余为 400/500。
-func writeStoreError(w http.ResponseWriter, err error) {
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
+// writeErr 按错误类别映射状态码：不存在 404，参数 / 前提不满足 400，锁单进行中 / 重复下单 409，站点侧失败 502，其余 500。
+func writeErr(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, engine.ErrInvalid), errors.Is(err, engine.ErrNoCredentials), errors.Is(err, engine.ErrNoAuthenticator),
+		errors.Is(err, engine.ErrNoAccount), errors.Is(err, engine.ErrNoOrderer), errors.Is(err, provider.ErrNotSupported):
+		status = http.StatusBadRequest
+	case errors.Is(err, store.ErrNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, engine.ErrOrderInFlight), errors.Is(err, engine.ErrDuplicateOrder):
+		status = http.StatusConflict
+	case errors.Is(err, engine.ErrUpstream):
+		status = http.StatusBadGateway
 	}
-	writeError(w, http.StatusBadRequest, err.Error())
+	writeError(w, status, err.Error())
 }
 
 func queryInt(r *http.Request, key string, fallback int) int {

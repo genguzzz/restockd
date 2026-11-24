@@ -4,7 +4,9 @@
 package domain
 
 import (
+	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"time"
 )
@@ -26,6 +28,15 @@ const (
 type Money struct {
 	Cents    int64  `json:"cents"`
 	Currency string `json:"currency"`
+}
+
+// String 统一金额展示，如 "188.00 CNY"。
+func (m Money) String() string {
+	cents := m.Cents % 100
+	if cents < 0 {
+		cents = -cents
+	}
+	return fmt.Sprintf("%d.%02d %s", m.Cents/100, cents, m.Currency)
 }
 
 // Price 某个计费周期下的售价。
@@ -139,16 +150,19 @@ type Site struct {
 	IntervalSec int               `json:"interval_sec"`
 	FetchMode   FetchMode         `json:"fetch_mode"`
 	// Egress 出口优先级（egress 登记的出口 ID，"direct" 为直连）；空表示用全局默认。出错按顺序回退。
-	Egress []string `json:"egress,omitempty"`
-	// Proxy 已废弃（单一代理），启动时迁移为 Egress。
-	Proxy           string    `json:"proxy,omitempty"`
-	MonitorAccount  string    `json:"monitor_account_id,omitempty"`
+	Egress         []string `json:"egress,omitempty"`
+	MonitorAccount string   `json:"monitor_account_id,omitempty"`
+	// HiddenProducts 用户隐藏的商品 ID：不列出、不通知、不自动锁单（只经隐藏 / 取消隐藏接口修改）。
+	HiddenProducts  []string  `json:"hidden_products,omitempty"`
 	Enabled         bool      `json:"enabled"`
 	LastPollAt      time.Time `json:"last_poll_at,omitempty"`
 	LastError       string    `json:"last_error,omitempty"`
 	NextPollAt      time.Time `json:"next_poll_at,omitempty"`
 	ConsecutiveFail int       `json:"consecutive_fail"`
 }
+
+// Hidden 商品是否被用户隐藏。
+func (s Site) Hidden(productID string) bool { return slices.Contains(s.HiddenProducts, productID) }
 
 // FetchMode 抓取方式。
 type FetchMode string
@@ -167,7 +181,6 @@ const (
 	AccountUnknown AccountStatus = "unknown"
 	AccountActive  AccountStatus = "active"
 	AccountExpired AccountStatus = "expired"
-	AccountLimited AccountStatus = "rate_limited"
 )
 
 // Credentials 托管的登录凭据（密钥）：单独存储，API 永不回传密码。
@@ -186,10 +199,7 @@ type Account struct {
 	Label       string         `json:"label"`
 	Cookies     []*http.Cookie `json:"-"`
 	Credentials Credentials    `json:"-"`
-	// Username / HasPassword 是凭据的对外展示（由 SyncCookieNames 同步）。
-	Username    string    `json:"username,omitempty"`
-	HasPassword bool      `json:"has_password"`
-	LoginAt     time.Time `json:"login_at,omitempty"`
+	LoginAt     time.Time      `json:"login_at,omitempty"`
 	// CredentialsRejected 站点明确拒绝了当前密码：暂停自动登录（避免反复失败触发封禁），
 	// 直到用户修改凭据或手动点「登录」。
 	CredentialsRejected bool          `json:"credentials_rejected,omitempty"`
@@ -201,7 +211,6 @@ type Account struct {
 	LastError           string        `json:"last_error,omitempty"`
 	Defaults            OrderDefaults `json:"defaults"`
 	CreatedAt           time.Time     `json:"created_at"`
-	CookieNames         []string      `json:"cookie_names"`
 }
 
 // OrderDefaults 账号级默认下单参数，Watch 未填写时回落到这里。
@@ -319,17 +328,6 @@ type Event struct {
 	Title     string    `json:"title"`
 	Detail    string    `json:"detail,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
-}
-
-// SyncCookieNames 刷新密钥字段的对外展示：Cookie 名称列表、用户名、是否保存了密码（值永不外露）。
-func (a *Account) SyncCookieNames() {
-	names := make([]string, 0, len(a.Cookies))
-	for _, cookie := range a.Cookies {
-		names = append(names, cookie.Name)
-	}
-	a.CookieNames = names
-	a.Username = a.Credentials.Username
-	a.HasPassword = a.Credentials.Password != ""
 }
 
 var cycleOrder = map[BillingCycle]int{CycleMonthly: 1, CycleQuarterly: 2, CycleSemiannually: 3, CycleAnnually: 4, CycleBiennially: 5, CycleTriennially: 6, CycleOneTime: 7}

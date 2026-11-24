@@ -23,17 +23,75 @@ var ErrNotFound = errors.New("not found")
 
 const schema = `
 CREATE TABLE IF NOT EXISTS sites (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, site_id TEXT NOT NULL, data TEXT NOT NULL, cookies TEXT NOT NULL DEFAULT '[]');
+CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, site_id TEXT NOT NULL, data TEXT NOT NULL, cookies TEXT NOT NULL DEFAULT '[]', secrets TEXT NOT NULL DEFAULT '{}');
 CREATE INDEX IF NOT EXISTS idx_accounts_site ON accounts(site_id);
 CREATE TABLE IF NOT EXISTS watches (id TEXT PRIMARY KEY, site_id TEXT NOT NULL, data TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_watches_site ON watches(site_id);
 CREATE TABLE IF NOT EXISTS products (site_id TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(site_id, id));
 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, site_id TEXT NOT NULL, product_id TEXT NOT NULL DEFAULT '', title TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
-CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, watch_id TEXT NOT NULL DEFAULT '', site_id TEXT NOT NULL, created_at INTEGER NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, watch_id TEXT NOT NULL DEFAULT '', site_id TEXT NOT NULL, product_id TEXT NOT NULL DEFAULT '', account_id TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, data TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `
+
+// migrations 按 PRAGMA user_version 依次执行：migrations[i] 把库从 v(i) 升到 v(i+1)。
+// 新库由 schema 建表后同样从 v0 跑完全部迁移，因此每步都须幂等；依赖新列的索引放在迁移里建。
+var migrations = []func(*sql.Tx) error{
+	// v0 → v1：旧库 accounts 缺 secrets 列（账号凭据）。
+	func(tx *sql.Tx) error {
+		return addColumn(tx, "accounts", "secrets", `TEXT NOT NULL DEFAULT '{}'`)
+	},
+	// v1 → v2：orders 增加 product_id / account_id 列（按商品查最近订单、防重复下单）。
+	func(tx *sql.Tx) error {
+		for _, column := range []string{"product_id", "account_id"} {
+			if err := addColumn(tx, "orders", column, `TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(`UPDATE orders SET product_id=COALESCE(json_extract(data, '$.product_id'), ''), account_id=COALESCE(json_extract(data, '$.account_id'), '') WHERE product_id='';
+CREATE INDEX IF NOT EXISTS idx_orders_product ON orders(site_id, product_id, created_at)`)
+		return err
+	},
+}
+
+// addColumn 列不存在时补列。
+func addColumn(tx *sql.Tx, table, column, definition string) error {
+	var count int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, table, column).Scan(&count); err != nil || count > 0 {
+		return err
+	}
+	_, err := tx.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, definition))
+	return err
+}
+
+func migrate(db *sql.DB) error {
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	for ; version < len(migrations); version++ {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if err := migrations[version](tx); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("v%d: %w", version+1, err)
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version=%d`, version+1)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // Store 数据访问。
 type Store struct {
@@ -45,19 +103,14 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(4)
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
-	}
-	// v2：账号凭据列（旧库补列，已存在时忽略）。
-	if _, err := db.Exec(`ALTER TABLE accounts ADD COLUMN secrets TEXT NOT NULL DEFAULT '{}'`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
-		db.Close()
-		return nil, fmt.Errorf("migrate secrets: %w", err)
 	}
 	_ = os.Chmod(path, 0o600)
 	return &Store{db: db}, nil
@@ -127,7 +180,6 @@ func (s *Store) SaveAccount(ctx context.Context, account domain.Account) error {
 	for _, cookie := range account.Cookies {
 		records = append(records, cookieRecord{Name: cookie.Name, Value: cookie.Value, Path: cookie.Path, Expires: cookie.Expires, HTTPOnly: cookie.HttpOnly, Secure: cookie.Secure})
 	}
-	account.SyncCookieNames()
 	data, err := marshal(account)
 	if err != nil {
 		return err
@@ -198,7 +250,6 @@ func scanAccount(row scanner) (domain.Account, error) {
 	if err := json.Unmarshal([]byte(secrets), &account.Credentials); err != nil {
 		return domain.Account{}, err
 	}
-	account.SyncCookieNames()
 	return account, nil
 }
 
@@ -279,6 +330,29 @@ func (s *Store) ListProducts(ctx context.Context, siteID string) ([]domain.Produ
 	return listJSON[domain.Product](ctx, s.db, `SELECT data FROM products WHERE site_id=? ORDER BY CAST(id AS INTEGER), id`, siteID)
 }
 
+// ProductCounts 站点商品统计；Visible / InStock 不含隐藏商品。
+type ProductCounts struct {
+	Visible int
+	// InStock 可下单（in_stock / preorder，同 domain.StockStatus.Orderable）。
+	InStock int
+	Hidden  int
+}
+
+// CountProducts 一次查询统计站点商品，hidden 为该站点隐藏的商品 ID。
+func (s *Store) CountProducts(ctx context.Context, siteID string, hidden []string) (ProductCounts, error) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(hidden)), ",")
+	query := `SELECT COALESCE(SUM(NOT hidden), 0), COALESCE(SUM(NOT hidden AND status IN (?, ?)), 0), COALESCE(SUM(hidden), 0)
+FROM (SELECT id IN (` + placeholders + `) AS hidden, json_extract(data, '$.stock.status') AS status FROM products WHERE site_id=?)`
+	args := []any{string(domain.StockIn), string(domain.StockPreorder)}
+	for _, id := range hidden {
+		args = append(args, id)
+	}
+	args = append(args, siteID)
+	var counts ProductCounts
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&counts.Visible, &counts.InStock, &counts.Hidden)
+	return counts, err
+}
+
 // GetProduct 读取单个商品快照。
 func (s *Store) GetProduct(ctx context.Context, siteID, id string) (domain.Product, error) {
 	var product domain.Product
@@ -350,8 +424,59 @@ func (s *Store) SaveOrder(ctx context.Context, order domain.Order) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO orders(id, watch_id, site_id, created_at, data) VALUES(?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, order.ID, order.WatchID, order.SiteID, order.CreatedAt.UnixMilli(), data)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO orders(id, watch_id, site_id, product_id, account_id, created_at, data) VALUES(?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET product_id=excluded.product_id, account_id=excluded.account_id, data=excluded.data`, order.ID, order.WatchID, order.SiteID, order.ProductID, order.AccountID, order.CreatedAt.UnixMilli(), data)
 	return err
+}
+
+// LatestPlacedOrder 某站点商品在 since 之后由该账号成功锁下的最近一单；没有时返回 ErrNotFound。
+func (s *Store) LatestPlacedOrder(ctx context.Context, siteID, productID, accountID string, since time.Time) (domain.Order, error) {
+	var order domain.Order
+	err := s.getJSON(ctx, `SELECT data FROM orders WHERE site_id=? AND product_id=? AND account_id=? AND created_at>=? AND json_extract(data, '$.status')=? ORDER BY created_at DESC LIMIT 1`,
+		&order, siteID, productID, accountID, since.UnixMilli(), string(domain.OrderPlaced))
+	return order, err
+}
+
+// ProductKey 站点内商品的唯一键。
+type ProductKey struct{ SiteID, ProductID string }
+
+// ProductOrders 某商品的订单概况：最近一单（任意状态）与最近成功锁单时间（无则为零值）。
+type ProductOrders struct {
+	Last         domain.Order
+	LastPlacedAt time.Time
+}
+
+// LatestOrders 一次查询得到各商品的订单概况；siteID 为空时覆盖全部站点。
+func (s *Store) LatestOrders(ctx context.Context, siteID string) (map[ProductKey]ProductOrders, error) {
+	query := `SELECT site_id, product_id, data, last_placed FROM (
+	SELECT site_id, product_id, data,
+		MAX(CASE WHEN json_extract(data, '$.status')=? THEN created_at END) OVER (PARTITION BY site_id, product_id) AS last_placed,
+		ROW_NUMBER() OVER (PARTITION BY site_id, product_id ORDER BY created_at DESC, rowid DESC) AS rn
+	FROM orders WHERE product_id!='' AND (?='' OR site_id=?)
+) WHERE rn=1`
+	rows, err := s.db.QueryContext(ctx, query, string(domain.OrderPlaced), siteID, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[ProductKey]ProductOrders{}
+	for rows.Next() {
+		var key ProductKey
+		var data string
+		var lastPlaced sql.NullInt64
+		if err := rows.Scan(&key.SiteID, &key.ProductID, &data, &lastPlaced); err != nil {
+			return nil, err
+		}
+		var state ProductOrders
+		if err := json.Unmarshal([]byte(data), &state.Last); err != nil {
+			return nil, err
+		}
+		if lastPlaced.Valid {
+			state.LastPlacedAt = time.UnixMilli(lastPlaced.Int64).UTC()
+		}
+		out[key] = state
+	}
+	return out, rows.Err()
 }
 
 // ListOrders 最新在前。
@@ -364,6 +489,12 @@ func (s *Store) CountPlacedSince(ctx context.Context, since time.Time) (int, err
 	var count int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM orders WHERE created_at>=? AND json_extract(data, '$.status')=?`, since.UnixMilli(), string(domain.OrderPlaced)).Scan(&count)
 	return count, err
+}
+
+// PruneOrders 删除早于 before 的订单记录。
+func (s *Store) PruneOrders(ctx context.Context, before time.Time) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM orders WHERE created_at<?`, before.UnixMilli())
+	return err
 }
 
 // ---- settings ----

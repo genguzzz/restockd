@@ -7,20 +7,17 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/genguzzz/restockd/internal/domain"
-	"github.com/genguzzz/restockd/internal/egress"
 	"github.com/genguzzz/restockd/internal/engine"
 	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/provider"
 	"github.com/genguzzz/restockd/internal/solver"
+	"github.com/genguzzz/restockd/internal/store"
 )
-
-const secretMask = "******"
 
 // ---- providers ----
 
@@ -41,31 +38,35 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 
 // ---- sites ----
 
+// siteDTO 计数不含隐藏商品，隐藏的单独计 hidden_count。
 type siteDTO struct {
 	domain.Site
 	ProductCount int `json:"product_count"`
 	InStockCount int `json:"in_stock_count"`
+	HiddenCount  int `json:"hidden_count"`
 }
 
 func (s *Server) siteDTO(ctx context.Context, site domain.Site) siteDTO {
-	dto := siteDTO{Site: site}
-	products, err := s.store.ListProducts(ctx, site.ID)
-	if err != nil {
-		return dto
-	}
-	dto.ProductCount = len(products)
-	for _, product := range products {
-		if product.Stock.Status.Orderable() {
-			dto.InStockCount++
+	counts, _ := s.store.CountProducts(ctx, site.ID, site.HiddenProducts)
+	return siteDTO{Site: site, ProductCount: counts.Visible, InStockCount: counts.InStock, HiddenCount: counts.Hidden}
+}
+
+// handleHideProduct 隐藏（hidden=true）/ 取消隐藏商品，返回更新后的站点。
+func (s *Server) handleHideProduct(hidden bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		site, err := s.engine.SetProductHidden(r.Context(), r.PathValue("id"), r.PathValue("product_id"), hidden)
+		if err != nil {
+			writeErr(w, err)
+			return
 		}
+		writeJSON(w, http.StatusOK, s.siteDTO(r.Context(), site))
 	}
-	return dto
 }
 
 func (s *Server) handleListSites(w http.ResponseWriter, r *http.Request) {
 	sites, err := s.store.ListSites(r.Context())
 	if err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
 	out := make([]siteDTO, 0, len(sites))
@@ -88,7 +89,7 @@ func (s *Server) handleSaveSite(w http.ResponseWriter, r *http.Request) {
 	}
 	saved, err := s.engine.SaveSite(r.Context(), site)
 	if err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.siteDTO(r.Context(), saved))
@@ -96,22 +97,19 @@ func (s *Server) handleSaveSite(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteSite(w http.ResponseWriter, r *http.Request) {
 	if err := s.engine.DeleteSite(r.Context(), r.PathValue("id")); err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handlePollSite(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-	id := r.PathValue("id")
-	if err := s.engine.PollNow(ctx, id); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+	products, err := s.engine.PollNow(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
 		return
 	}
-	products, _ := s.store.ListProducts(r.Context(), id)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "products": len(products)})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "products": products})
 }
 
 // ---- products ----
@@ -119,6 +117,19 @@ func (s *Server) handlePollSite(w http.ResponseWriter, r *http.Request) {
 type productDTO struct {
 	domain.Product
 	Watched bool `json:"watched"`
+	// Hidden 只在 include_hidden=1 时可能为 true（默认不列出隐藏商品）。
+	Hidden bool `json:"hidden,omitempty"`
+	// LastOrder 该商品最近一单（任意状态，含试下单）；LastPlacedAt 最近成功锁单时间。
+	LastOrder    *orderSummary `json:"last_order,omitempty"`
+	LastPlacedAt *time.Time    `json:"last_placed_at,omitempty"`
+}
+
+type orderSummary struct {
+	Status    domain.OrderStatus `json:"status"`
+	CreatedAt time.Time          `json:"created_at"`
+	PayURL    string             `json:"pay_url,omitempty"`
+	InvoiceID string             `json:"invoice_id,omitempty"`
+	Error     string             `json:"error,omitempty"`
 }
 
 func (s *Server) handleListProducts(w http.ResponseWriter, r *http.Request) {
@@ -128,98 +139,126 @@ func (s *Server) handleListProducts(w http.ResponseWriter, r *http.Request) {
 	}
 	products, err := s.store.ListProducts(r.Context(), siteID)
 	if err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
 	watches, err := s.store.ListWatches(r.Context(), siteID)
 	if err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
-	watched := map[string]bool{}
+	orders, err := s.store.LatestOrders(r.Context(), siteID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	sites, err := s.store.ListSites(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	watched, hidden := map[store.ProductKey]bool{}, map[store.ProductKey]bool{}
 	for _, watch := range watches {
-		watched[watch.SiteID+"/"+watch.ProductID] = true
+		watched[store.ProductKey{SiteID: watch.SiteID, ProductID: watch.ProductID}] = true
+	}
+	for _, site := range sites {
+		for _, id := range site.HiddenProducts {
+			hidden[store.ProductKey{SiteID: site.ID, ProductID: id}] = true
+		}
 	}
 	status := r.URL.Query().Get("status")
 	keyword := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	includeHidden := r.URL.Query().Get("include_hidden") == "1"
 	out := make([]productDTO, 0, len(products))
 	for _, product := range products {
+		key := store.ProductKey{SiteID: product.SiteID, ProductID: product.ID}
+		if hidden[key] && !includeHidden {
+			continue
+		}
 		if status != "" && string(product.Stock.Status) != status {
 			continue
 		}
 		if keyword != "" && !strings.Contains(strings.ToLower(product.Name+" "+product.Group+" "+product.Specs.Location), keyword) {
 			continue
 		}
-		out = append(out, productDTO{Product: product, Watched: watched[product.SiteID+"/"+product.ID]})
+		dto := productDTO{Product: product, Watched: watched[key], Hidden: hidden[key]}
+		if state, ok := orders[key]; ok {
+			last := state.Last
+			dto.LastOrder = &orderSummary{Status: last.Status, CreatedAt: last.CreatedAt, PayURL: last.Result.PayURL, InvoiceID: last.Result.InvoiceID, Error: last.Error}
+			if !state.LastPlacedAt.IsZero() {
+				dto.LastPlacedAt = &state.LastPlacedAt
+			}
+		}
+		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 // ---- accounts ----
 
+// accountDTO 账号的对外视图：Cookie 与凭据只回名称 / 用户名 / 是否有密码。
+type accountDTO struct {
+	domain.Account
+	Username    string   `json:"username,omitempty"`
+	HasPassword bool     `json:"has_password"`
+	CookieNames []string `json:"cookie_names"`
+}
+
+func newAccountDTO(account domain.Account) accountDTO {
+	names := make([]string, 0, len(account.Cookies))
+	for _, cookie := range account.Cookies {
+		names = append(names, cookie.Name)
+	}
+	return accountDTO{Account: account, Username: account.Credentials.Username, HasPassword: account.Credentials.Password != "", CookieNames: names}
+}
+
 func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 	accounts, err := s.store.ListAccounts(r.Context(), r.URL.Query().Get("site_id"))
 	if err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
-	if accounts == nil {
-		accounts = []domain.Account{}
+	out := make([]accountDTO, 0, len(accounts))
+	for _, account := range accounts {
+		out = append(out, newAccountDTO(account))
 	}
-	writeJSON(w, http.StatusOK, accounts)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleSaveAccount(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		domain.Account
-		CookiesRaw string `json:"cookies_raw"`
-		// 托管凭据：username 省略表示不修改；password 省略或 "******" 不修改，空串清除。
+		SiteID     string               `json:"site_id"`
+		Label      string               `json:"label"`
+		UserAgent  string               `json:"user_agent"`
+		Defaults   domain.OrderDefaults `json:"defaults"`
+		CookiesRaw string               `json:"cookies_raw"`
+		// 托管凭据：username 省略表示不修改；password 省略或掩码不修改，空串清除。
 		Username *string `json:"username"`
 		Password *string `json:"password"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	account := body.Account
-	if id := r.PathValue("id"); id != "" {
-		account.ID = id
-	}
-	saved, err := s.engine.SaveAccount(r.Context(), account)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	if body.Username != nil || body.Password != nil {
-		username := saved.Credentials.Username
-		if body.Username != nil {
-			username = strings.TrimSpace(*body.Username)
-		}
-		password := body.Password
-		if password != nil && *password == secretMask {
-			password = nil
-		}
-		if saved, err = s.engine.SetCredentials(r.Context(), saved.ID, username, password); err != nil {
-			writeStoreError(w, err)
-			return
-		}
-	}
+	input := engine.AccountInput{ID: r.PathValue("id"), SiteID: body.SiteID, Label: body.Label, UserAgent: body.UserAgent, Defaults: body.Defaults, Username: body.Username, Password: body.Password}
 	if strings.TrimSpace(body.CookiesRaw) != "" {
 		cookies, err := fetch.ParseCookies(body.CookiesRaw)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "cookies: "+err.Error())
 			return
 		}
-		if saved, err = s.engine.SetCookies(r.Context(), saved.ID, cookies, account.UserAgent); err != nil {
-			writeStoreError(w, err)
-			return
-		}
+		input.Cookies = cookies
 	}
-	writeJSON(w, http.StatusOK, saved)
+	saved, err := s.engine.SaveAccount(r.Context(), input)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, newAccountDTO(saved))
 }
 
 func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 	if err := s.engine.DeleteAccount(r.Context(), r.PathValue("id")); err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -240,43 +279,30 @@ func (s *Server) handleSetCookies(w http.ResponseWriter, r *http.Request) {
 	}
 	account, err := s.engine.SetCookies(r.Context(), r.PathValue("id"), cookies, strings.TrimSpace(body.UserAgent))
 	if err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cookie_names": account.CookieNames})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cookie_names": newAccountDTO(account).CookieNames})
 }
 
-// handleLoginAccount 用托管凭据立即登录；站点侧失败返回 502 与原因（账号状态同步更新），
-// 本地前提不满足（无凭据 / 站点不支持）返回 400。超时留足人工验证的时间。
+// handleLoginAccount 用托管凭据立即登录；站点侧失败 502（账号状态同步更新），无凭据 / 站点不支持 400。
 func (s *Server) handleLoginAccount(w http.ResponseWriter, r *http.Request) {
-	timeout := time.Duration(s.engine.Settings().Solver.ManualTimeoutSec)*time.Second + time.Minute
-	if timeout < 2*time.Minute {
-		timeout = 2 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
-	defer cancel()
-	account, err := s.engine.LoginAccount(ctx, r.PathValue("id"))
-	switch {
-	case err == nil:
-		writeJSON(w, http.StatusOK, account)
-	case errors.Is(err, engine.ErrNoCredentials), errors.Is(err, engine.ErrNoAuthenticator):
-		writeError(w, http.StatusBadRequest, err.Error())
-	case account.ID == "":
-		writeStoreError(w, err) // 账号或站点不存在
-	default:
-		writeError(w, http.StatusBadGateway, err.Error())
-	}
-}
-
-func (s *Server) handleCheckAccount(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
-	defer cancel()
-	account, err := s.engine.CheckAccount(ctx, r.PathValue("id"))
-	if err != nil && account.ID == "" {
-		writeStoreError(w, err)
+	account, err := s.engine.LoginAccount(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, account)
+	writeJSON(w, http.StatusOK, newAccountDTO(account))
+}
+
+// handleCheckAccount 站点侧的校验结果记在返回的账号状态里；站点类型不支持校验时 400。
+func (s *Server) handleCheckAccount(w http.ResponseWriter, r *http.Request) {
+	account, err := s.engine.CheckAccount(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, newAccountDTO(account))
 }
 
 // ---- watches ----
@@ -284,7 +310,7 @@ func (s *Server) handleCheckAccount(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListWatches(w http.ResponseWriter, r *http.Request) {
 	watches, err := s.store.ListWatches(r.Context(), r.URL.Query().Get("site_id"))
 	if err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, watches)
@@ -300,7 +326,7 @@ func (s *Server) handleSaveWatch(w http.ResponseWriter, r *http.Request) {
 	}
 	saved, err := s.engine.SaveWatch(r.Context(), watch)
 	if err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, saved)
@@ -308,18 +334,16 @@ func (s *Server) handleSaveWatch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteWatch(w http.ResponseWriter, r *http.Request) {
 	if err := s.engine.DeleteWatch(r.Context(), r.PathValue("id")); err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleQuote(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-	quote, err := s.engine.QuoteWatch(ctx, r.PathValue("id"))
+	quote, err := s.engine.QuoteWatch(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, quote)
@@ -329,17 +353,34 @@ func (s *Server) handleQuote(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOrder(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		DryRun bool `json:"dry_run"`
+		Force  bool `json:"force"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	order, err := s.engine.OrderWatch(context.WithoutCancel(r.Context()), r.PathValue("id"), body.DryRun)
+	order, err := s.engine.OrderWatch(context.WithoutCancel(r.Context()), r.PathValue("id"), body.DryRun, body.Force)
+	writeOrder(w, order, err)
+}
+
+// handleOrderProduct 不经关注规则直接对商品锁单 / 试下单，执行方式同 handleOrder。
+func (s *Server) handleOrderProduct(w http.ResponseWriter, r *http.Request) {
+	var body engine.ProductOrderInput
+	if !decode(w, r, &body) {
+		return
+	}
+	order, err := s.engine.OrderProduct(context.WithoutCancel(r.Context()), r.PathValue("id"), r.PathValue("product_id"), body)
+	writeOrder(w, order, err)
+}
+
+// writeOrder 已建订单记录（含失败）返回订单本身；24 小时内已锁单返回 409 与已有订单；其余前置错误按 writeErr 映射。
+func writeOrder(w http.ResponseWriter, order domain.Order, err error) {
+	var duplicate *engine.DuplicateOrderError
+	if errors.As(err, &duplicate) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "order": duplicate.Existing})
+		return
+	}
 	if err != nil && order.ID == "" {
-		status := http.StatusBadRequest
-		if errors.Is(err, engine.ErrOrderInFlight) {
-			status = http.StatusConflict
-		}
-		writeError(w, status, err.Error())
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, order)
@@ -350,7 +391,7 @@ func (s *Server) handleOrder(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListOrders(w http.ResponseWriter, r *http.Request) {
 	orders, err := s.store.ListOrders(r.Context(), queryInt(r, "limit", 100))
 	if err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, orders)
@@ -359,7 +400,7 @@ func (s *Server) handleListOrders(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 	events, err := s.store.ListEvents(r.Context(), r.URL.Query().Get("site_id"), queryInt(r, "limit", 200))
 	if err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
 	if events == nil {
@@ -398,8 +439,11 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			payload := message.Payload
-			if site, isSite := payload.(domain.Site); isSite {
-				payload = s.siteDTO(r.Context(), site)
+			switch item := payload.(type) {
+			case domain.Site:
+				payload = s.siteDTO(r.Context(), item)
+			case domain.Account:
+				payload = newAccountDTO(item)
 			}
 			data, err := json.Marshal(payload)
 			if err != nil {
@@ -456,130 +500,34 @@ func (s *Server) handleCancelChallenge(w http.ResponseWriter, r *http.Request) {
 
 // ---- settings ----
 
-func maskSecret(value string) string {
-	if value == "" {
-		return ""
-	}
-	return secretMask
-}
-
-func keepSecret(incoming, current string) string {
-	if incoming == secretMask {
-		return current
-	}
-	return incoming
-}
-
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	settings := s.engine.Settings()
-	settings.Telegram.BotToken = maskSecret(settings.Telegram.BotToken)
-	settings.Email.Password = maskSecret(settings.Email.Password)
-	settings.Bark.DeviceURLs = maskSecret(settings.Bark.DeviceURLs)
-	settings.Solver.ExternalToken = maskSecret(settings.Solver.ExternalToken)
-	settings.Egress.Proxies = append([]egress.Proxy(nil), settings.Egress.Proxies...)
-	for i := range settings.Egress.Proxies {
-		settings.Egress.Proxies[i].URL = maskProxyURL(settings.Egress.Proxies[i].URL)
-	}
-	if settings.Egress.Proxies == nil {
-		settings.Egress.Proxies = []egress.Proxy{}
-	}
-	if settings.Egress.Default == nil {
-		settings.Egress.Default = []string{}
-	}
-	if settings.NotifyEvents == nil {
-		settings.NotifyEvents = []string{}
-	}
-	writeJSON(w, http.StatusOK, settings)
+	writeJSON(w, http.StatusOK, s.engine.Settings().Redacted())
 }
 
+// handlePutSettings 整体覆盖；打码字段原样传回表示不修改。
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	var incoming engine.Settings
 	if !decode(w, r, &incoming) {
 		return
 	}
-	current := s.engine.Settings()
-	incoming.Telegram.BotToken = keepSecret(incoming.Telegram.BotToken, current.Telegram.BotToken)
-	incoming.Email.Password = keepSecret(incoming.Email.Password, current.Email.Password)
-	incoming.Bark.DeviceURLs = keepSecret(incoming.Bark.DeviceURLs, current.Bark.DeviceURLs)
-	incoming.Solver.ExternalToken = keepSecret(incoming.Solver.ExternalToken, current.Solver.ExternalToken)
-	stored := map[string]string{}
-	for _, proxy := range current.Egress.Proxies {
-		stored[proxy.ID] = proxy.URL
-	}
-	for i, proxy := range incoming.Egress.Proxies {
-		if strings.Contains(proxy.URL, secretMask) {
-			incoming.Egress.Proxies[i].URL = stored[proxy.ID] // 打码的地址表示密码未改
-		}
-		if strings.TrimSpace(proxy.ID) == "" || proxy.ID == egress.Direct {
-			writeError(w, http.StatusBadRequest, "proxy id is required and must not be \"direct\"")
-			return
-		}
-	}
 	if err := s.engine.SaveSettings(r.Context(), incoming); err != nil {
-		writeStoreError(w, err)
+		writeErr(w, err)
 		return
 	}
 	s.handleGetSettings(w, r)
 }
 
 func (s *Server) handleTestNotify(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	settings := s.engine.Settings()
-	results := map[string]string{"telegram": "disabled", "email": "disabled", "bark": "disabled"}
-	if settings.Telegram.Enabled {
-		results["telegram"] = "not configured"
-	}
-	if settings.Email.Enabled {
-		results["email"] = "not configured"
-	}
-	if settings.Bark.Enabled {
-		results["bark"] = "not configured"
-	}
-	for channel, err := range s.engine.TestNotify(ctx) {
-		results[channel] = "ok"
-		if err != nil {
-			results[channel] = err.Error()
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "results": results})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "results": s.engine.TestNotify(r.Context())})
 }
 
-// maskProxyURL 隐去代理地址里的密码：socks5://user:******@host:port。
-func maskProxyURL(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.User == nil {
-		return raw
-	}
-	if _, has := parsed.User.Password(); !has {
-		return raw
-	}
-	return strings.Replace(raw, parsed.User.String()+"@", parsed.User.Username()+":"+secretMask+"@", 1)
-}
-
-// handleTestEgress 经指定出口访问 Cloudflare trace，返回出口 IP / 地区 / 耗时。
 func (s *Server) handleTestEgress(w http.ResponseWriter, r *http.Request) {
-	route, err := s.engine.EgressRoute(r.PathValue("id"))
+	probe, err := s.engine.TestEgress(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErr(w, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	session, _ := fetch.NewSession("https://www.cloudflare.com", nil, "")
-	started := time.Now()
-	resp, err := route.Client.Do(ctx, session, &fetch.Request{Method: http.MethodGet, URL: "https://www.cloudflare.com/cdn-cgi/trace"})
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
-		return
-	}
-	result := map[string]any{"ok": true, "ms": time.Since(started).Milliseconds()}
-	for _, line := range strings.Split(string(resp.Body), "\n") {
-		if key, value, found := strings.Cut(line, "="); found && (key == "ip" || key == "loc" || key == "colo") {
-			result[key] = value
-		}
-	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, probe)
 }
 
 // ---- stats ----
@@ -588,23 +536,23 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	since := time.Now().Add(-24 * time.Hour)
 	sites, _ := s.store.ListSites(ctx)
-	products, _ := s.store.ListProducts(ctx, "")
+	products, inStock := 0, 0 // 不含隐藏商品
+	for _, site := range sites {
+		counts, _ := s.store.CountProducts(ctx, site.ID, site.HiddenProducts)
+		products += counts.Visible
+		inStock += counts.InStock
+	}
 	watches, _ := s.store.ListWatches(ctx, "")
 	orders24h, _ := s.store.CountPlacedSince(ctx, since)
 	events24h, _ := s.store.CountEventsSince(ctx, since)
-	inStock, autoWatches := 0, 0
-	for _, product := range products {
-		if product.Stock.Status.Orderable() {
-			inStock++
-		}
-	}
+	autoWatches := 0
 	for _, watch := range watches {
 		if watch.Enabled && watch.AutoOrder {
 			autoWatches++
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]int{
-		"sites": len(sites), "products": len(products), "in_stock": inStock, "watches": len(watches), "auto_watches": autoWatches,
+		"sites": len(sites), "products": products, "in_stock": inStock, "watches": len(watches), "auto_watches": autoWatches,
 		"orders_24h": orders24h, "pending_challenges": len(s.engine.Broker().List()), "events_24h": events24h,
 	})
 }

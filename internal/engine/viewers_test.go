@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/genguzzz/restockd/internal/domain"
+	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/provider"
 	"github.com/genguzzz/restockd/internal/store"
 )
@@ -91,6 +92,58 @@ func TestOnDemandPolling(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "back to lazy", func() bool { return nextPollIn(t, st, site.ID) > 4*time.Minute })
+}
+
+// limitedProvider 每次轮询都被站点限流（Retry-After 1 小时）。
+type limitedProvider struct{ polls atomic.Int32 }
+
+var limitedState = &limitedProvider{}
+
+func init() {
+	provider.Register(provider.Meta{Kind: "fakelimited", Name: "fakelimited", MinInterval: time.Second, DefaultInterval: time.Second, Caps: provider.Capabilities{Catalog: true}}, func(domain.Site) (provider.Provider, error) {
+		return limitedState, nil
+	})
+}
+
+func (f *limitedProvider) Meta() provider.Meta {
+	meta, _ := provider.Lookup("fakelimited")
+	return meta
+}
+
+func (f *limitedProvider) Catalog(context.Context, provider.Env) (domain.Catalog, error) {
+	f.polls.Add(1)
+	return domain.Catalog{}, &fetch.RateLimitError{RetryAfter: time.Hour}
+}
+
+func TestWakeRespectsBackoff(t *testing.T) {
+	restore := viewerRefreshMin
+	viewerRefreshMin = 0
+	defer func() { viewerRefreshMin = restore }()
+	ctx := context.Background()
+	st, _ := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	defer st.Close()
+	engine, _ := New(Options{Store: st})
+	_ = engine.Start(ctx)
+	defer engine.Stop()
+	engine.Hub().SetNotifiers(nil, nil)
+	limitedState.polls.Store(0)
+	site, err := engine.SaveSite(ctx, domain.Site{ID: "rl", Kind: "fakelimited", Name: "Limited", BaseURL: "https://limited.test", Enabled: true, IntervalSec: 1, Config: map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "rate-limited poll scheduled", func() bool {
+		stored, _ := st.GetSite(ctx, site.ID)
+		return stored.ConsecutiveFail == 1
+	})
+	if next := nextPollIn(t, st, site.ID); next < 50*time.Minute {
+		t.Fatalf("Retry-After not honoured: next poll in %s", next)
+	}
+	engine.TouchViewer()
+	engine.RescheduleSite(site.ID)
+	time.Sleep(300 * time.Millisecond)
+	if polls := limitedState.polls.Load(); polls != 1 {
+		t.Fatalf("wake must not poll a rate-limited site early, got %d polls", polls)
+	}
 }
 
 func TestSiteIntervalNeverBelowSiteSetting(t *testing.T) {

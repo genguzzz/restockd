@@ -63,7 +63,7 @@ func priceSummary(product domain.Product) string {
 			price = candidate
 		}
 	}
-	return fmt.Sprintf("%s %s", FormatMoney(price.Amount), price.Cycle)
+	return fmt.Sprintf("%s %s", price.Amount, price.Cycle)
 }
 
 // priceChange 任一已有周期的价格变化即视为变动。
@@ -71,20 +71,8 @@ func priceChange(old, next domain.Product) (string, bool) {
 	for _, price := range next.Prices {
 		previous, ok := old.PriceFor(price.Cycle)
 		if ok && previous.Amount != price.Amount {
-			return fmt.Sprintf("%s: %s → %s", price.Cycle, FormatMoney(previous.Amount), FormatMoney(price.Amount)), true
+			return fmt.Sprintf("%s: %s → %s", price.Cycle, previous.Amount, price.Amount), true
 		}
 	}
 	return "", false
-}
-
-// FormatMoney 统一金额展示。
-func FormatMoney(money domain.Money) string {
-	return fmt.Sprintf("%d.%02d %s", money.Cents/100, abs(money.Cents%100), money.Currency)
-}
-
-func abs(value int64) int64 {
-	if value < 0 {
-		return -value
-	}
-	return value
 }

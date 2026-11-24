@@ -26,7 +26,6 @@ func main() {
 	listen := flag.String("listen", envOr("RESTOCKD_LISTEN", "127.0.0.1:8080"), "HTTP 监听地址")
 	dataDir := flag.String("data", envOr("RESTOCKD_DATA", "./data"), "数据目录（SQLite）")
 	publicURL := flag.String("public-url", os.Getenv("RESTOCKD_PUBLIC_URL"), "对外访问地址，用于通知中的链接")
-	proxy := flag.String("proxy", os.Getenv("RESTOCKD_PROXY"), "出站 HTTP/SOCKS5 代理，如 socks5://127.0.0.1:1080")
 	debug := flag.Bool("debug", os.Getenv("RESTOCKD_DEBUG") == "1", "调试日志")
 	seed := flag.Bool("seed", true, "数据库为空时写入默认站点（novixlink cox、usvps24）")
 	flag.Parse()
@@ -35,7 +34,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-	if err := run(logger, *listen, *dataDir, *publicURL, *proxy, *seed); err != nil {
+	if err := run(logger, *listen, *dataDir, *publicURL, *seed); err != nil {
 		logger.Error("fatal", "err", err)
 		os.Exit(1)
 	}
@@ -48,7 +47,7 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-func run(logger *slog.Logger, listen, dataDir, publicURL, proxy string, seed bool) error {
+func run(logger *slog.Logger, listen, dataDir, publicURL string, seed bool) error {
 	password := os.Getenv("RESTOCKD_PASSWORD")
 	if password == "" {
 		return errors.New("RESTOCKD_PASSWORD is required")
@@ -60,7 +59,7 @@ func run(logger *slog.Logger, listen, dataDir, publicURL, proxy string, seed boo
 		return err
 	}
 	defer st.Close()
-	eng, err := engine.New(engine.Options{Store: st, Log: logger, ProxyURL: proxy, PublicURL: publicURL})
+	eng, err := engine.New(engine.Options{Store: st, Log: logger, PublicURL: publicURL})
 	if err != nil {
 		return err
 	}
