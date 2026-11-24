@@ -51,6 +51,7 @@
   "config": {"groups": "cox-isp-vps"},
   "interval_sec": 60,
   "fetch_mode": "flaresolverr",
+  "proxy": "",
   "monitor_account_id": "",
   "enabled": true,
   "last_poll_at": "2026-11-24T07:40:00Z",
@@ -62,7 +63,7 @@
 }
 ```
 新建 / 更新请求体为上述对象去掉只读字段（`last_*`、`next_poll_at`、`consecutive_fail`、`*_count`）。`id` 新建时可空（服务端生成）。
-`fetch_mode`：`direct` | `flaresolverr`。
+`fetch_mode`：`direct` | `flaresolverr`。`proxy`：站点专用出口（`http://…` / `socks5://…`），本服务器 IP 被站点限流时换线，对轮询与下单都生效；留空走默认出口（FlareSolverr 请求不经过它）。
 
 ## Product（商品快照）
 

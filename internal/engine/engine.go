@@ -69,6 +69,9 @@ type Engine struct {
 	publicURL string
 
 	direct *fetch.DirectClient
+	// proxied 站点专用出口的客户端，按代理地址复用。
+	proxied     map[string]*fetch.DirectClient
+	httpTimeout time.Duration
 
 	mu       sync.RWMutex
 	settings Settings
@@ -102,16 +105,18 @@ func New(options Options) (*Engine, error) {
 		logger = slog.Default()
 	}
 	engine := &Engine{
-		store:     options.Store,
-		log:       logger,
-		bus:       NewBus(),
-		hub:       notify.NewHub(),
-		broker:    solver.NewManualBroker(5 * time.Minute),
-		publicURL: strings.TrimRight(options.PublicURL, "/"),
-		direct:    direct,
-		sites:     map[string]*siteRunner{},
-		sessions:  map[string]*fetch.Session{},
-		orderLock: map[string]*sync.Mutex{},
+		store:       options.Store,
+		log:         logger,
+		bus:         NewBus(),
+		hub:         notify.NewHub(),
+		broker:      solver.NewManualBroker(5 * time.Minute),
+		publicURL:   strings.TrimRight(options.PublicURL, "/"),
+		direct:      direct,
+		proxied:     map[string]*fetch.DirectClient{},
+		httpTimeout: timeout,
+		sites:       map[string]*siteRunner{},
+		sessions:    map[string]*fetch.Session{},
+		orderLock:   map[string]*sync.Mutex{},
 	}
 	engine.broker.OnNew = engine.onChallenge
 	engine.broker.OnDone = func(id string) { engine.bus.Publish("challenge_done", map[string]string{"id": id}) }
@@ -222,10 +227,31 @@ func (e *Engine) clientFor(site domain.Site) fetch.Client {
 	e.mu.RLock()
 	flare := e.flare
 	e.mu.RUnlock()
+	direct := e.directFor(site)
 	if site.FetchMode == domain.FetchFlareSolverr && flare != nil {
-		return &fetch.HybridClient{Primary: e.direct, Fallback: flare}
+		return &fetch.HybridClient{Primary: direct, Fallback: flare}
 	}
-	return e.direct
+	return direct
+}
+
+// directFor 站点设置了专用出口时返回对应客户端（按代理地址复用）；地址无效时记日志并回落默认出口。
+func (e *Engine) directFor(site domain.Site) *fetch.DirectClient {
+	proxy := strings.TrimSpace(site.Proxy)
+	if proxy == "" {
+		return e.direct
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if client, ok := e.proxied[proxy]; ok {
+		return client
+	}
+	client, err := fetch.NewDirectClient(e.httpTimeout, proxy)
+	if err != nil {
+		e.log.Warn("invalid site proxy, using default egress", "site", site.ID, "err", err)
+		return e.direct
+	}
+	e.proxied[proxy] = client
+	return client
 }
 
 func (e *Engine) currentSolver() solver.Solver {

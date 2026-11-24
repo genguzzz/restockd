@@ -83,6 +83,7 @@ const toInput = (site: Site): SiteInput => ({
   config: { ...site.config },
   interval_sec: site.interval_sec,
   fetch_mode: site.fetch_mode,
+  proxy: site.proxy ?? '',
   monitor_account_id: site.monitor_account_id ?? '',
   enabled: site.enabled,
 })
@@ -114,7 +115,7 @@ const form = ref<SiteInput>(emptyInput())
 const siteAccounts = ref<Account[]>([])
 
 function emptyInput(): SiteInput {
-  return { kind: '', name: '', base_url: '', config: {}, interval_sec: DEFAULT_INTERVAL_SEC, fetch_mode: 'direct', monitor_account_id: '', enabled: true }
+  return { kind: '', name: '', base_url: '', config: {}, interval_sec: DEFAULT_INTERVAL_SEC, fetch_mode: 'direct', proxy: '', monitor_account_id: '', enabled: true }
 }
 
 const selectedProvider = computed<ProviderMeta | undefined>(() => providerOf(form.value.kind))
@@ -291,6 +292,9 @@ onMounted(() => {
                 <n-radio value="flaresolverr">FlareSolverr 浏览器代理（Cloudflare 站点）</n-radio>
               </n-space>
             </n-radio-group>
+          </n-form-item>
+          <n-form-item label="出口代理（可选）" feedback="本服务器 IP 被站点限流 / 封禁时换线，如 socks5://127.0.0.1:1080；对轮询与下单都生效">
+            <n-input v-model:value="form.proxy" placeholder="留空走默认出口" />
           </n-form-item>
           <n-form-item
             label="监控账号"

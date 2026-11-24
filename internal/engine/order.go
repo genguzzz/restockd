@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/genguzzz/restockd/internal/domain"
+	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/notify"
 	"github.com/genguzzz/restockd/internal/provider"
 	"github.com/genguzzz/restockd/internal/solver"
@@ -206,8 +207,12 @@ func (e *Engine) executeOrder(ctx context.Context, site domain.Site, watch domai
 	return order, err
 }
 
-// retryable 缺货、会话失效、验证取消 / 超时、配置错误等不重试。
+// retryable 缺货、会话失效、验证取消 / 超时、配置错误、站点限流等不重试（限流时重试只会延长封禁）。
 func retryable(err error) bool {
+	var rateLimit *fetch.RateLimitError
+	if errors.As(err, &rateLimit) {
+		return false
+	}
 	switch {
 	case errors.Is(err, provider.ErrOutOfStock), errors.Is(err, provider.ErrSessionExpired), errors.Is(err, provider.ErrNotSupported), errors.Is(err, provider.ErrCouponInvalid), errors.Is(err, provider.ErrLoginFailed), errors.Is(err, ErrNoAuthenticator):
 		return false

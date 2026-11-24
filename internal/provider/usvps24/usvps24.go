@@ -60,6 +60,8 @@ type Provider struct {
 	mu      sync.RWMutex
 	version string
 	props   *checkoutProps
+	// orderPagesBlockedUntil 下单页返回 429 后的封禁截止时间：期间不再请求（每次请求都会让站点重新计时）。
+	orderPagesBlockedUntil time.Time
 }
 
 var (
@@ -302,6 +304,28 @@ func planStock(plan stockPlan) domain.Stock {
 	}
 }
 
+// orderPagesBlocked 距下单页封禁结束还有多久（0 表示可访问）。
+func (p *Provider) orderPagesBlocked() time.Duration {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return time.Until(p.orderPagesBlockedUntil)
+}
+
+// noteRateLimit 下单页 429：按 Retry-After（缺省 1 小时）记下封禁截止时间。
+func (p *Provider) noteRateLimit(err error) {
+	var rateLimit *fetch.RateLimitError
+	if !errors.As(err, &rateLimit) {
+		return
+	}
+	wait := rateLimit.RetryAfter
+	if wait <= 0 {
+		wait = time.Hour
+	}
+	p.mu.Lock()
+	p.orderPagesBlockedUntil = time.Now().Add(wait)
+	p.mu.Unlock()
+}
+
 func (p *Provider) cachedProps() *checkoutProps {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -310,8 +334,12 @@ func (p *Provider) cachedProps() *checkoutProps {
 
 // loadCheckout 优先用 Inertia JSON（体积小）；版本不匹配或首次访问时解析 HTML 中的 data-page。
 func (p *Provider) loadCheckout(ctx context.Context, env provider.Env) (*checkoutProps, error) {
+	if wait := p.orderPagesBlocked(); wait > 0 {
+		return nil, fmt.Errorf("order pages blocked for this egress IP (change the site proxy to order now): %w", &fetch.RateLimitError{RetryAfter: wait})
+	}
 	resp, err := env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodGet, URL: p.baseURL + "/orders/create", Header: p.inertiaHeader(env.Session)})
 	if err != nil {
+		p.noteRateLimit(err)
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusConflict {

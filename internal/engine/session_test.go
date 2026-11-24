@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/genguzzz/restockd/internal/domain"
+	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/notify"
 	"github.com/genguzzz/restockd/internal/provider"
 	"github.com/genguzzz/restockd/internal/store"
@@ -285,5 +286,23 @@ func TestIDSchemeChanged(t *testing.T) {
 	}
 	if idSchemeChanged(old, []domain.Product{{ID: "21"}, {ID: "new"}}) || idSchemeChanged(nil, old) || idSchemeChanged(old, nil) {
 		t.Fatal("overlap / empty sides are normal polls")
+	}
+}
+
+func TestSiteProxyClientsAndRateLimitNotRetried(t *testing.T) {
+	st, _ := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	defer st.Close()
+	engine, _ := New(Options{Store: st})
+	plain := engine.directFor(domain.Site{ID: "a"})
+	viaProxy := engine.directFor(domain.Site{ID: "b", Proxy: "socks5://127.0.0.1:10820"})
+	again := engine.directFor(domain.Site{ID: "c", Proxy: "socks5://127.0.0.1:10820"})
+	if plain == viaProxy || viaProxy != again {
+		t.Fatal("proxied sites need their own, shared-per-proxy client")
+	}
+	if engine.directFor(domain.Site{ID: "d", Proxy: "://bad"}) != plain {
+		t.Fatal("invalid proxy must fall back to the default egress")
+	}
+	if retryable(fmt.Errorf("load: %w", &fetch.RateLimitError{RetryAfter: time.Hour})) {
+		t.Fatal("rate limits must not be retried within an order")
 	}
 }

@@ -29,6 +29,8 @@ type fakeSite struct {
 	checkoutBody map[string]any
 	checkoutHdr  http.Header
 	rejectWith   string
+	limited      bool
+	limitedHits  int
 	jsonHits     int
 	htmlHits     int
 	stockHits    int
@@ -81,6 +83,12 @@ func (f *fakeSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(raw)
 		f.stockHits++
 	case r.Method == http.MethodGet && r.URL.Path == "/orders/create":
+		if f.limited {
+			f.limitedHits++
+			w.Header().Set("Retry-After", "3600")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
 		f.writePage(w, r, f.page)
 	case r.Method == http.MethodPost && r.URL.Path == "/orders/coupon/preview":
 		if r.Header.Get("X-XSRF-TOKEN") != "abc==" {
@@ -291,5 +299,23 @@ func TestDryRunAndSessionCheck(t *testing.T) {
 	}
 	if info.Identity != "me@example.com" || info.Balance.Cents != 1234 {
 		t.Fatalf("unexpected info %+v", info)
+	}
+}
+
+// 下单页 429 后在 Retry-After 内不得再请求：每次请求都会让站点的封禁重新计时。
+func TestOrderPageRateLimitFailsFast(t *testing.T) {
+	fake := newFakeSite(t, true)
+	fake.limited = true
+	p, env := newEnv(t, fake, &tokenSolver{})
+	spec := domain.OrderSpec{ProductID: "pinnacle-network-2", Cycle: domain.CycleMonthly}
+	for i := 0; i < 3; i++ {
+		_, err := p.PlaceOrder(context.Background(), env, spec)
+		var rateLimit *fetch.RateLimitError
+		if !errors.As(err, &rateLimit) || rateLimit.RetryAfter < 50*time.Minute {
+			t.Fatalf("attempt %d: want rate limit with ~1h retry, got %v", i, err)
+		}
+	}
+	if fake.limitedHits != 1 {
+		t.Fatalf("blocked order page must be requested once, got %d", fake.limitedHits)
 	}
 }

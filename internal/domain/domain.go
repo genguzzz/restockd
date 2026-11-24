@@ -131,19 +131,21 @@ type Catalog struct {
 // Site 一个被监控的站点实例：Kind 指向 Provider 实现，Config 为该实现的参数。
 // 同一 Kind（如 whmcs）可对应多个站点，新增 WHMCS 商家只需加配置。
 type Site struct {
-	ID              string            `json:"id"`
-	Kind            string            `json:"kind"`
-	Name            string            `json:"name"`
-	BaseURL         string            `json:"base_url"`
-	Config          map[string]string `json:"config"`
-	IntervalSec     int               `json:"interval_sec"`
-	FetchMode       FetchMode         `json:"fetch_mode"`
-	MonitorAccount  string            `json:"monitor_account_id,omitempty"`
-	Enabled         bool              `json:"enabled"`
-	LastPollAt      time.Time         `json:"last_poll_at,omitempty"`
-	LastError       string            `json:"last_error,omitempty"`
-	NextPollAt      time.Time         `json:"next_poll_at,omitempty"`
-	ConsecutiveFail int               `json:"consecutive_fail"`
+	ID          string            `json:"id"`
+	Kind        string            `json:"kind"`
+	Name        string            `json:"name"`
+	BaseURL     string            `json:"base_url"`
+	Config      map[string]string `json:"config"`
+	IntervalSec int               `json:"interval_sec"`
+	FetchMode   FetchMode         `json:"fetch_mode"`
+	// Proxy 站点专用出口（http:// / socks5://），留空走服务默认出口；用于出口 IP 被站点限制时换线。
+	Proxy           string    `json:"proxy,omitempty"`
+	MonitorAccount  string    `json:"monitor_account_id,omitempty"`
+	Enabled         bool      `json:"enabled"`
+	LastPollAt      time.Time `json:"last_poll_at,omitempty"`
+	LastError       string    `json:"last_error,omitempty"`
+	NextPollAt      time.Time `json:"next_poll_at,omitempty"`
+	ConsecutiveFail int       `json:"consecutive_fail"`
 }
 
 // FetchMode 抓取方式。

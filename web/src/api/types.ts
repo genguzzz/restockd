@@ -67,6 +67,8 @@ export interface Site {
   config: Record<string, string>
   interval_sec: number
   fetch_mode: FetchMode
+  /** 站点专用出口代理（http:// 或 socks5://），留空走默认出口 */
+  proxy?: string
   monitor_account_id?: string
   enabled: boolean
   last_poll_at?: string
@@ -79,7 +81,7 @@ export interface Site {
 
 export type SiteInput = Pick<
   Site,
-  'kind' | 'name' | 'base_url' | 'config' | 'interval_sec' | 'fetch_mode' | 'monitor_account_id' | 'enabled'
+  'kind' | 'name' | 'base_url' | 'config' | 'interval_sec' | 'fetch_mode' | 'proxy' | 'monitor_account_id' | 'enabled'
 > & { id?: string }
 
 export interface Choice {
