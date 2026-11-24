@@ -66,11 +66,12 @@ func priceSummary(product domain.Product) string {
 	return fmt.Sprintf("%s %s", price.Amount, price.Cycle)
 }
 
-// priceChange 任一已有周期的价格变化即视为变动。
+// priceChange 同一周期、同一币种的金额变化。币种不同（如账号结算币种与匿名访问不同、商家切换显示币种）
+// 无法比较，不算变动——否则每次切换都会把全部商品报成「价格变动」。
 func priceChange(old, next domain.Product) (string, bool) {
 	for _, price := range next.Prices {
 		previous, ok := old.PriceFor(price.Cycle)
-		if ok && previous.Amount != price.Amount {
+		if ok && previous.Amount.Currency == price.Amount.Currency && previous.Amount.Cents != price.Amount.Cents {
 			return fmt.Sprintf("%s: %s → %s", price.Cycle, previous.Amount, price.Amount), true
 		}
 	}

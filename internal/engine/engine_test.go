@@ -349,3 +349,17 @@ func TestEngineManualOrderFailureRecorded(t *testing.T) {
 		t.Fatalf("out of stock must not be retried, got %d attempts", fakeState.orderCount())
 	}
 }
+
+// 币种不同的价格无法比较：账号结算币种 / 商家显示币种切换不能报成「价格变动」。
+func TestDiffIgnoresCurrencySwitch(t *testing.T) {
+	priced := func(cents int64, currency string) domain.Product {
+		return domain.Product{ID: "4", Name: "P", Stock: domain.Stock{Status: domain.StockIn}, Prices: []domain.Price{{Cycle: domain.CycleMonthly, Amount: domain.Money{Cents: cents, Currency: currency}}}}
+	}
+	if events := Diff("s", []domain.Product{priced(14900, "CNY")}, []domain.Product{priced(2236, "USD")}); len(events) != 0 {
+		t.Fatalf("currency switch must not emit events, got %+v", events)
+	}
+	events := Diff("s", []domain.Product{priced(2236, "USD")}, []domain.Product{priced(2500, "USD")})
+	if len(events) != 1 || events[0].Type != domain.EventPriceChange {
+		t.Fatalf("same-currency change must be reported, got %+v", events)
+	}
+}

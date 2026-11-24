@@ -97,3 +97,28 @@ func TestCancelOrderNotAllowed(t *testing.T) {
 		t.Fatalf("unknown invoice must be a plain error, got %v", err)
 	}
 }
+
+// Lagom2（RSThemes）：服务列表首屏只有 AJAX 模板，服务 ID 来自 clientApi.php。
+func TestServiceForInvoiceRSThemes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		switch {
+		case r.URL.Path == "/modules/addons/RSThemes/src/Api/clientApi.php" && q.Get("method") == "getClientServices":
+			fmt.Fprint(w, `{"draw":1,"recordsTotal":2,"data":[{"id":17515},{"id":"17743"}]}`)
+		case q.Get("action") == "services":
+			fmt.Fprint(w, `<a href="/logout.php">Logout</a><script>ajax: { url: '/modules/addons/RSThemes/src/Api/clientApi.php?controller=ClientData&method=getClientServices' } // productdetails&id=`+"`+data.id+`"+`</script>`)
+		case q.Get("action") == "productdetails":
+			fmt.Fprintf(w, `<a href="/logout.php">Logout</a><a href="viewinvoice.php?id=%s">pay</a>`, map[string]string{"17515": "1", "17743": "33031"}[q.Get("id")])
+		default:
+			fmt.Fprint(w, `<a href="/logout.php">Logout</a>`)
+		}
+	}))
+	defer server.Close()
+	instance, _ := New(domain.Site{ID: "nv", BaseURL: server.URL, Config: map[string]string{"groups": "g"}})
+	client, _ := fetch.NewHTTPClient(5*time.Second, "")
+	session, _ := fetch.NewSession(server.URL, nil, "")
+	id, err := instance.(*Provider).serviceForInvoice(context.Background(), provider.Env{Client: client, Session: session}, "33031")
+	if err != nil || id != "17743" {
+		t.Fatalf("want service 17743 via RSThemes api, got %q %v", id, err)
+	}
+}

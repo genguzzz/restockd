@@ -2,6 +2,7 @@ package whmcs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -73,18 +74,54 @@ func (p *Provider) CancelOrder(ctx context.Context, env provider.Env, result dom
 	return nil
 }
 
+// rsThemesServicesAPI Lagom2 主题服务列表的数据接口（DataTables 格式）。
+const rsThemesServicesAPI = "/modules/addons/RSThemes/src/Api/clientApi.php?controller=ClientData&method=getClientServices"
+
+func (p *Provider) rsThemesServiceIDs(ctx context.Context, env provider.Env) ([]int, error) {
+	resp, err := env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodGet, URL: p.baseURL + rsThemesServicesAPI + "&draw=1&start=0&length=50", Header: http.Header{"X-Requested-With": {"XMLHttpRequest"}, "Accept": {"application/json"}}})
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Data []struct {
+			ID json.Number `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body, &payload); err != nil {
+		return nil, fmt.Errorf("services api: %w", err)
+	}
+	var ids []int
+	for _, row := range payload.Data {
+		if id, err := strconv.Atoi(row.ID.String()); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+func uniqueIDs(matches [][][]byte) []int {
+	seen := map[int]bool{}
+	var ids []int
+	for _, match := range matches {
+		if id, err := strconv.Atoi(string(match[1])); err == nil && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // serviceForInvoice 在「我的服务」里从最新的服务往前找，详情页引用了该账单的即为本单服务。
 func (p *Provider) serviceForInvoice(ctx context.Context, env provider.Env, invoiceID string) (string, error) {
 	list, err := p.get(ctx, env, "/clientarea.php?action=services")
 	if err != nil {
 		return "", err
 	}
-	seen := map[int]bool{}
-	var ids []int
-	for _, match := range serviceIDPattern.FindAllSubmatch(list.resp.Body, -1) {
-		if id, err := strconv.Atoi(string(match[1])); err == nil && !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
+	ids := uniqueIDs(serviceIDPattern.FindAllSubmatch(list.resp.Body, -1))
+	if len(ids) == 0 && strings.Contains(string(list.resp.Body), rsThemesServicesAPI) {
+		// Lagom2（RSThemes）主题的服务表格由 AJAX 加载，首屏没有服务链接。
+		if ids, err = p.rsThemesServiceIDs(ctx, env); err != nil {
+			return "", err
 		}
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(ids)))

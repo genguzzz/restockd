@@ -87,8 +87,9 @@ func CSRFToken(doc *goquery.Document, body []byte) string {
 
 var (
 	// 千分位分支至少要有一组分隔符：否则 "1000.00" 会被第一个分支截成 "100"。
-	amountPattern   = regexp.MustCompile(`(-?\d{1,3}(?:[,\s]\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)`)
-	currencyPattern = regexp.MustCompile(`\b([A-Z]{3})\b`)
+	amountPattern = regexp.MustCompile(`(-?\d{1,3}(?:[,\s]\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)`)
+	// 已知币种代码，前后不能紧挨字母（"22.36USD" 也要识别，"VPS" 之类不能误认）。
+	currencyPattern = regexp.MustCompile(`(?:^|[^A-Za-z])(USD|CNY|RMB|CAD|EUR|GBP|HKD|JPY|AUD|SGD|TWD|KRW|RUB|CHF|NZD)(?:$|[^A-Za-z])`)
 )
 
 var symbolCurrency = map[string]string{"C$": "CAD", "CA$": "CAD", "A$": "AUD", "HK$": "HKD", "US$": "USD", "$": "USD", "¥": "CNY", "￥": "CNY", "€": "EUR", "£": "GBP"}
@@ -110,6 +111,9 @@ func ParseMoney(text, fallbackCurrency string) (domain.Money, bool) {
 // detectCurrency 优先三位货币代码；裸 "$" 有歧义（USD/CAD/AUD…），有站点默认货币时以默认为准。
 func detectCurrency(text, fallbackCurrency string) string {
 	if code := currencyPattern.FindStringSubmatch(text); code != nil {
+		if code[1] == "RMB" {
+			return "CNY"
+		}
 		return code[1]
 	}
 	for _, symbol := range []string{"CA$", "C$", "A$", "HK$", "US$", "$", "¥", "￥", "€", "£"} {
