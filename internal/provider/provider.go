@@ -1,0 +1,176 @@
+// Package provider 定义主机商适配器的统一接口与注册表。
+//
+// 新增一个主机商 = 新建子包实现 Provider（必选）与 Orderer / SessionChecker（可选），并在 init 中 Register。
+// 同一种站点系统（如 WHMCS）只需实现一次，不同商家通过 Site.Config 区分（如商品组、主题差异）。
+package provider
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/genguzzz/restockd/internal/domain"
+	"github.com/genguzzz/restockd/internal/fetch"
+	"github.com/genguzzz/restockd/internal/solver"
+)
+
+// ErrSessionExpired 账号会话失效，需要重新粘贴 Cookie。
+var ErrSessionExpired = errors.New("session expired")
+
+// ErrOutOfStock 下单时站点返回无货。
+var ErrOutOfStock = errors.New("out of stock")
+
+// ErrCouponInvalid 站点明确拒绝了优惠码；为避免原价成交，锁单中止。
+var ErrCouponInvalid = errors.New("coupon rejected")
+
+// ErrNotSupported 该 Provider 不支持此能力。
+var ErrNotSupported = errors.New("not supported by provider")
+
+// FieldType 配置字段类型，前端据此渲染表单。
+type FieldType string
+
+const (
+	FieldText     FieldType = "text"
+	FieldList     FieldType = "list"
+	FieldBool     FieldType = "bool"
+	FieldPassword FieldType = "password"
+)
+
+// Field Site.Config 的一个配置项描述。
+type Field struct {
+	Key         string    `json:"key"`
+	Label       string    `json:"label"`
+	Type        FieldType `json:"type"`
+	Required    bool      `json:"required"`
+	Default     string    `json:"default,omitempty"`
+	Placeholder string    `json:"placeholder,omitempty"`
+	Help        string    `json:"help,omitempty"`
+}
+
+// Capabilities Provider 能力声明。
+type Capabilities struct {
+	Catalog      bool `json:"catalog"`
+	Coupon       bool `json:"coupon"`
+	Order        bool `json:"order"`
+	SessionCheck bool `json:"session_check"`
+	// StockNeedsLogin 查询库存是否必须登录（决定监控时是否带账号会话）。
+	StockNeedsLogin bool `json:"stock_needs_login"`
+}
+
+// Meta Provider 元信息。
+type Meta struct {
+	Kind        string       `json:"kind"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Caps        Capabilities `json:"capabilities"`
+	// MinInterval 站点能承受的最短轮询间隔；用户设置更短会被抬高到这里。
+	MinInterval     time.Duration    `json:"-"`
+	DefaultInterval time.Duration    `json:"-"`
+	DefaultFetch    domain.FetchMode `json:"default_fetch_mode"`
+	ConfigFields    []Field          `json:"config_fields"`
+	// Captcha 下单环节可能出现的验证类型，前端提示用户配置对应 Solver。
+	Captcha []solver.Kind `json:"captcha,omitempty"`
+}
+
+// Env 一次调用的运行环境，由引擎组装。
+type Env struct {
+	Site    domain.Site
+	Client  fetch.Client
+	Session *fetch.Session
+	Account *domain.Account
+	Solver  solver.Solver
+	Log     *slog.Logger
+}
+
+// Provider 必选能力：拉取商品目录（含库存、价格、配置项）。
+type Provider interface {
+	Meta() Meta
+	Catalog(ctx context.Context, env Env) (domain.Catalog, error)
+}
+
+// Orderer 可选能力：算价（含优惠码校验）与下单锁单。
+type Orderer interface {
+	Quote(ctx context.Context, env Env, spec domain.OrderSpec) (domain.Quote, error)
+	PlaceOrder(ctx context.Context, env Env, spec domain.OrderSpec) (domain.OrderResult, error)
+}
+
+// SessionInfo 会话检查结果。
+type SessionInfo struct {
+	Identity string        `json:"identity"`
+	Balance  *domain.Money `json:"balance,omitempty"`
+}
+
+// SessionChecker 可选能力：校验账号 Cookie 是否仍有效。
+type SessionChecker interface {
+	CheckSession(ctx context.Context, env Env) (SessionInfo, error)
+}
+
+// Factory 依据站点配置构造 Provider 实例。
+type Factory func(site domain.Site) (Provider, error)
+
+type registration struct {
+	meta    Meta
+	factory Factory
+}
+
+var (
+	registryMu sync.RWMutex
+	registry   = map[string]registration{}
+)
+
+// Register 在子包 init 中调用。
+func Register(meta Meta, factory Factory) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if _, exists := registry[meta.Kind]; exists {
+		panic("provider: duplicate kind " + meta.Kind)
+	}
+	registry[meta.Kind] = registration{meta: meta, factory: factory}
+}
+
+// New 根据 Site.Kind 构造实例。
+func New(site domain.Site) (Provider, error) {
+	registryMu.RLock()
+	reg, ok := registry[site.Kind]
+	registryMu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("provider: unknown kind %q", site.Kind)
+	}
+	return reg.factory(site)
+}
+
+// Lookup 查询已注册 Kind 的元信息。
+func Lookup(kind string) (Meta, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	reg, ok := registry[kind]
+	return reg.meta, ok
+}
+
+// List 所有已注册 Provider 元信息，按 Kind 排序。
+func List() []Meta {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	out := make([]Meta, 0, len(registry))
+	for _, reg := range registry {
+		out = append(out, reg.meta)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Kind < out[j].Kind })
+	return out
+}
+
+// EffectiveInterval 合并用户设置与 Provider 限制。
+func EffectiveInterval(meta Meta, site domain.Site) time.Duration {
+	interval := time.Duration(site.IntervalSec) * time.Second
+	if interval <= 0 {
+		interval = meta.DefaultInterval
+	}
+	if interval < meta.MinInterval {
+		interval = meta.MinInterval
+	}
+	return interval
+}

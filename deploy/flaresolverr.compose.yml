@@ -1,0 +1,11 @@
+# Cloudflare 保护站点（如 novixlink）需要：docker compose -f flaresolverr.compose.yml up -d
+services:
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - TZ=Asia/Shanghai
+    ports:
+      - "127.0.0.1:8191:8191"
+    restart: unless-stopped

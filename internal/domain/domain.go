@@ -1,0 +1,321 @@
+// Package domain 定义与主机商无关的统一领域模型：商品、价格、库存、账号、关注规则与订单。
+//
+// 所有 Provider 实现都把各自站点的数据映射为这里的结构，引擎、存储与 API 只依赖本包。
+package domain
+
+import (
+	"net/http"
+	"sort"
+	"time"
+)
+
+// BillingCycle 统一的计费周期标识。
+type BillingCycle string
+
+const (
+	CycleMonthly      BillingCycle = "monthly"
+	CycleQuarterly    BillingCycle = "quarterly"
+	CycleSemiannually BillingCycle = "semiannually"
+	CycleAnnually     BillingCycle = "annually"
+	CycleBiennially   BillingCycle = "biennially"
+	CycleTriennially  BillingCycle = "triennially"
+	CycleOneTime      BillingCycle = "onetime"
+)
+
+// Money 金额，以最小货币单位（分）存储，避免浮点误差。
+type Money struct {
+	Cents    int64  `json:"cents"`
+	Currency string `json:"currency"`
+}
+
+// Price 某个计费周期下的售价。
+type Price struct {
+	Cycle  BillingCycle `json:"cycle"`
+	Amount Money        `json:"amount"`
+	Setup  Money        `json:"setup"`
+	// RefID 站点内部的周期 ID（如 usvps24 billing_cycles[].id），下单时可能需要。
+	RefID string `json:"ref_id,omitempty"`
+}
+
+// Choice 一个可选值。
+type Choice struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	// DeltaMonthly 选中后每月增加的费用，可为零。
+	DeltaMonthly Money `json:"delta_monthly"`
+}
+
+// ConfigOption 商品的可配置项（带宽、IP 数量等）。
+type ConfigOption struct {
+	Key     string   `json:"key"`
+	Label   string   `json:"label"`
+	Choices []Choice `json:"choices"`
+}
+
+// Specs 规格信息；结构化字段尽量填写，站点特有的放 Extra。
+type Specs struct {
+	CPU           string            `json:"cpu,omitempty"`
+	RAMMB         int               `json:"ram_mb,omitempty"`
+	DiskGB        int               `json:"disk_gb,omitempty"`
+	BandwidthMbps int               `json:"bandwidth_mbps,omitempty"`
+	TrafficGB     int               `json:"traffic_gb,omitempty"`
+	Location      string            `json:"location,omitempty"`
+	IPType        string            `json:"ip_type,omitempty"`
+	Extra         map[string]string `json:"extra,omitempty"`
+}
+
+// StockStatus 库存状态。
+type StockStatus string
+
+const (
+	StockIn       StockStatus = "in_stock"
+	StockOut      StockStatus = "out_of_stock"
+	StockPreorder StockStatus = "preorder"
+	StockClosed   StockStatus = "closed"
+	StockUnknown  StockStatus = "unknown"
+)
+
+// Orderable 当前状态是否可下单。
+func (s StockStatus) Orderable() bool {
+	return s == StockIn || s == StockPreorder
+}
+
+// Stock 库存信息；Qty 为 nil 表示站点未披露数量。
+type Stock struct {
+	Status StockStatus `json:"status"`
+	Qty    *int        `json:"qty,omitempty"`
+	Reason string      `json:"reason,omitempty"`
+}
+
+// Product 统一商品模型。
+type Product struct {
+	SiteID      string         `json:"site_id"`
+	ID          string         `json:"id"`
+	Group       string         `json:"group,omitempty"`
+	Name        string         `json:"name"`
+	URL         string         `json:"url,omitempty"`
+	Specs       Specs          `json:"specs"`
+	Prices      []Price        `json:"prices"`
+	Options     []ConfigOption `json:"options,omitempty"`
+	OSTemplates []Choice       `json:"os_templates,omitempty"`
+	Stock       Stock          `json:"stock"`
+	NoDiscount  bool           `json:"no_discount,omitempty"`
+	FetchedAt   time.Time      `json:"fetched_at"`
+}
+
+// PriceFor 返回指定周期的价格。
+func (p Product) PriceFor(cycle BillingCycle) (Price, bool) {
+	for _, price := range p.Prices {
+		if price.Cycle == cycle {
+			return price, true
+		}
+	}
+	return Price{}, false
+}
+
+// Promo 站点公开的促销信息。
+type Promo struct {
+	Code     string    `json:"code"`
+	Percent  int       `json:"percent"`
+	StartsAt time.Time `json:"starts_at,omitempty"`
+	EndsAt   time.Time `json:"ends_at,omitempty"`
+}
+
+// Catalog 一次抓取得到的完整目录。
+type Catalog struct {
+	Products []Product `json:"products"`
+	Promo    *Promo    `json:"promo,omitempty"`
+	Gateways []string  `json:"gateways,omitempty"`
+}
+
+// Site 一个被监控的站点实例：Kind 指向 Provider 实现，Config 为该实现的参数。
+// 同一 Kind（如 whmcs）可对应多个站点，新增 WHMCS 商家只需加配置。
+type Site struct {
+	ID              string            `json:"id"`
+	Kind            string            `json:"kind"`
+	Name            string            `json:"name"`
+	BaseURL         string            `json:"base_url"`
+	Config          map[string]string `json:"config"`
+	IntervalSec     int               `json:"interval_sec"`
+	FetchMode       FetchMode         `json:"fetch_mode"`
+	MonitorAccount  string            `json:"monitor_account_id,omitempty"`
+	Enabled         bool              `json:"enabled"`
+	LastPollAt      time.Time         `json:"last_poll_at,omitempty"`
+	LastError       string            `json:"last_error,omitempty"`
+	NextPollAt      time.Time         `json:"next_poll_at,omitempty"`
+	ConsecutiveFail int               `json:"consecutive_fail"`
+}
+
+// FetchMode 抓取方式。
+type FetchMode string
+
+const (
+	// FetchDirect 直接用 Go HTTP 客户端访问。
+	FetchDirect FetchMode = "direct"
+	// FetchFlareSolverr 经由 FlareSolverr 浏览器代理访问（Cloudflare 保护站点）。
+	FetchFlareSolverr FetchMode = "flaresolverr"
+)
+
+// AccountStatus 账号会话状态。
+type AccountStatus string
+
+const (
+	AccountUnknown AccountStatus = "unknown"
+	AccountActive  AccountStatus = "active"
+	AccountExpired AccountStatus = "expired"
+	AccountLimited AccountStatus = "rate_limited"
+)
+
+// Account 托管的站点账号：以 Cookie 会话为主，可选保存登录凭据供实现自动登录。
+type Account struct {
+	ID          string         `json:"id"`
+	SiteID      string         `json:"site_id"`
+	Label       string         `json:"label"`
+	Cookies     []*http.Cookie `json:"-"`
+	UserAgent   string         `json:"user_agent,omitempty"`
+	Status      AccountStatus  `json:"status"`
+	Identity    string         `json:"identity,omitempty"`
+	Balance     *Money         `json:"balance,omitempty"`
+	CheckedAt   time.Time      `json:"checked_at,omitempty"`
+	LastError   string         `json:"last_error,omitempty"`
+	Defaults    OrderDefaults  `json:"defaults"`
+	CreatedAt   time.Time      `json:"created_at"`
+	CookieNames []string       `json:"cookie_names"`
+}
+
+// OrderDefaults 账号级默认下单参数，Watch 未填写时回落到这里。
+type OrderDefaults struct {
+	Gateway  string `json:"gateway,omitempty"`
+	OS       string `json:"os,omitempty"`
+	Hostname string `json:"hostname,omitempty"`
+	SSHKey   string `json:"ssh_key,omitempty"`
+}
+
+// Watch 关注规则：关注某站点某商品，可选择有货时自动锁单。
+type Watch struct {
+	ID            string            `json:"id"`
+	SiteID        string            `json:"site_id"`
+	ProductID     string            `json:"product_id"`
+	ProductName   string            `json:"product_name,omitempty"`
+	Cycle         BillingCycle      `json:"cycle"`
+	Options       map[string]string `json:"options,omitempty"`
+	OS            string            `json:"os,omitempty"`
+	Hostname      string            `json:"hostname,omitempty"`
+	Coupon        string            `json:"coupon,omitempty"`
+	Gateway       string            `json:"gateway,omitempty"`
+	Qty           int               `json:"qty"`
+	AccountID     string            `json:"account_id,omitempty"`
+	AutoOrder     bool              `json:"auto_order"`
+	MaxPriceCents int64             `json:"max_price_cents,omitempty"`
+	MaxOrders     int               `json:"max_orders"`
+	OrdersPlaced  int               `json:"orders_placed"`
+	Notify        bool              `json:"notify"`
+	Enabled       bool              `json:"enabled"`
+	CreatedAt     time.Time         `json:"created_at"`
+	LastTriggered time.Time         `json:"last_triggered,omitempty"`
+}
+
+// OrderSpec 下单参数，由 Watch + 账号默认值合成。
+type OrderSpec struct {
+	ProductID string            `json:"product_id"`
+	Cycle     BillingCycle      `json:"cycle"`
+	Options   map[string]string `json:"options,omitempty"`
+	OS        string            `json:"os,omitempty"`
+	Hostname  string            `json:"hostname,omitempty"`
+	SSHKey    string            `json:"ssh_key,omitempty"`
+	Coupon    string            `json:"coupon,omitempty"`
+	Gateway   string            `json:"gateway,omitempty"`
+	Qty       int               `json:"qty"`
+	// DryRun 为 true 时只做到提交前一步（加购物车、校验优惠码、算价），不真正下单。
+	DryRun bool `json:"dry_run"`
+}
+
+// Quote 算价结果。
+type Quote struct {
+	Subtotal    Money  `json:"subtotal"`
+	Discount    Money  `json:"discount"`
+	Total       Money  `json:"total"`
+	CouponValid bool   `json:"coupon_valid"`
+	Message     string `json:"message,omitempty"`
+}
+
+// OrderStatus 订单记录状态。
+type OrderStatus string
+
+const (
+	OrderPending OrderStatus = "pending"
+	OrderPlaced  OrderStatus = "placed"
+	OrderDryRun  OrderStatus = "dry_run"
+	OrderFailed  OrderStatus = "failed"
+)
+
+// OrderResult Provider 下单返回。
+type OrderResult struct {
+	OrderID   string `json:"order_id,omitempty"`
+	InvoiceID string `json:"invoice_id,omitempty"`
+	PayURL    string `json:"pay_url,omitempty"`
+	Total     Money  `json:"total"`
+	Message   string `json:"message,omitempty"`
+}
+
+// Order 本地订单记录。
+type Order struct {
+	ID          string      `json:"id"`
+	WatchID     string      `json:"watch_id,omitempty"`
+	SiteID      string      `json:"site_id"`
+	AccountID   string      `json:"account_id"`
+	ProductID   string      `json:"product_id"`
+	ProductName string      `json:"product_name"`
+	Spec        OrderSpec   `json:"spec"`
+	Status      OrderStatus `json:"status"`
+	Result      OrderResult `json:"result"`
+	Error       string      `json:"error,omitempty"`
+	CreatedAt   time.Time   `json:"created_at"`
+	DurationMs  int64       `json:"duration_ms"`
+}
+
+// EventType 库存事件类型。
+type EventType string
+
+const (
+	EventRestock     EventType = "restock"
+	EventSoldOut     EventType = "sold_out"
+	EventPriceChange EventType = "price_change"
+	EventNewProduct  EventType = "new_product"
+	EventOrder       EventType = "order"
+	EventChallenge   EventType = "challenge"
+	EventPollError   EventType = "poll_error"
+)
+
+// Event 事件流记录。
+type Event struct {
+	ID        int64     `json:"id"`
+	Type      EventType `json:"type"`
+	SiteID    string    `json:"site_id"`
+	ProductID string    `json:"product_id,omitempty"`
+	Title     string    `json:"title"`
+	Detail    string    `json:"detail,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SyncCookieNames 按当前 Cookie 刷新对外展示的名称列表（值永不外露）。
+func (a *Account) SyncCookieNames() {
+	names := make([]string, 0, len(a.Cookies))
+	for _, cookie := range a.Cookies {
+		names = append(names, cookie.Name)
+	}
+	a.CookieNames = names
+}
+
+var cycleOrder = map[BillingCycle]int{CycleMonthly: 1, CycleQuarterly: 2, CycleSemiannually: 3, CycleAnnually: 4, CycleBiennially: 5, CycleTriennially: 6, CycleOneTime: 7}
+
+// SortPrices 按 月 → 季 → 半年 → 年 → 两年 → 三年 → 一次性 排序，未知周期排最后。
+func (p *Product) SortPrices() {
+	rank := func(cycle BillingCycle) int {
+		if order, ok := cycleOrder[cycle]; ok {
+			return order
+		}
+		return len(cycleOrder) + 1
+	}
+	sort.SliceStable(p.Prices, func(i, j int) bool { return rank(p.Prices[i].Cycle) < rank(p.Prices[j].Cycle) })
+}

@@ -1,0 +1,1462 @@
+{
+ "component": "Orders/Checkout",
+ "props": {
+  "errors": {},
+  "name": "干杯Cloud",
+  "locale": "zh",
+  "locales": [
+   "zh",
+   "en"
+  ],
+  "crispWebsiteId": "",
+  "aiAssistantEnabled": true,
+  "socials": [
+   "google",
+   "github"
+  ],
+  "passkeyEnabled": true,
+  "turnstileSiteKey": "0x4AAAAAAEYLz0zhOBPGkuek",
+  "company": {
+   "legal_name": null,
+   "address": null,
+   "support_email": "support@usvps24.com"
+  },
+  "promo": {
+   "code": "bf2026",
+   "percent": 20,
+   "preheat_at": 1794844800000,
+   "starts_at": 1795536000000,
+   "ends_at": 1796054400000
+  },
+  "flash": {
+   "success": null,
+   "error": null
+  },
+  "membership": {
+   "level_id": null,
+   "code": null,
+   "name": null,
+   "percent": 0
+  },
+  "products": [
+   {
+    "id": 10,
+    "slug": "pinnacle-network",
+    "name": "pinnacle network - 邀请制会员专线 · CORONA",
+    "specs": {
+     "cpu": "2",
+     "ram_mb": "2048",
+     "disk_gb": "20",
+     "ip_type": "商业静态IP(非IDC机房)",
+     "ip_count": 1,
+     "location": "美国加州 科罗娜 (Corona)",
+     "line_badge": "网关升级版",
+     "traffic_gb": null,
+     "overage_mbps": null,
+     "bandwidth_mbps": "200",
+     "extra_ip_monthly_cents": 14800
+    },
+    "config_options": {
+     "bandwidth_mbps": [
+      {
+       "value": 200,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 300,
+       "delta_monthly_cents": 8800
+      },
+      {
+       "value": 500,
+       "delta_monthly_cents": 16800
+      }
+     ],
+     "ip_count": [
+      {
+       "value": 1,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 2,
+       "delta_monthly_cents": 14800
+      },
+      {
+       "value": 3,
+       "delta_monthly_cents": 29600
+      },
+      {
+       "value": 4,
+       "delta_monthly_cents": 44400
+      },
+      {
+       "value": 5,
+       "delta_monthly_cents": 59200
+      },
+      {
+       "value": 6,
+       "delta_monthly_cents": 74000
+      },
+      {
+       "value": 7,
+       "delta_monthly_cents": 88800
+      },
+      {
+       "value": 8,
+       "delta_monthly_cents": 103600
+      },
+      {
+       "value": 9,
+       "delta_monthly_cents": 118400
+      },
+      {
+       "value": 10,
+       "delta_monthly_cents": 133200
+      },
+      {
+       "value": 11,
+       "delta_monthly_cents": 148000
+      },
+      {
+       "value": 12,
+       "delta_monthly_cents": 162800
+      },
+      {
+       "value": 13,
+       "delta_monthly_cents": 177600
+      },
+      {
+       "value": 14,
+       "delta_monthly_cents": 192400
+      },
+      {
+       "value": 15,
+       "delta_monthly_cents": 207200
+      },
+      {
+       "value": 16,
+       "delta_monthly_cents": 222000
+      },
+      {
+       "value": 17,
+       "delta_monthly_cents": 236800
+      },
+      {
+       "value": 18,
+       "delta_monthly_cents": 251600
+      },
+      {
+       "value": 19,
+       "delta_monthly_cents": 266400
+      },
+      {
+       "value": 20,
+       "delta_monthly_cents": 281200
+      }
+     ]
+    },
+    "region": "US-RIV-CORONA",
+    "no_discount": false,
+    "base_price_cents": 18800,
+    "monthly_list_cents": 18800,
+    "currency": "CNY",
+    "billing_cycles": [
+     {
+      "id": 25,
+      "period": "annually",
+      "price_cents": 180480,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 26,
+      "period": "monthly",
+      "price_cents": 18800,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 27,
+      "period": "quarterly",
+      "price_cents": 53580,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 28,
+      "period": "semiannually",
+      "price_cents": 101520,
+      "setup_fee_cents": 0
+     }
+    ],
+    "available": false,
+    "unavailable_reason": "sold_out",
+    "max_qty": 0,
+    "is_preorder": false,
+    "is_pool": false,
+    "coming_soon": false,
+    "preorder_note": null,
+    "pick_ip_fee_cents": 3000,
+    "pick_ip_available": 11,
+    "os_templates": [
+     {
+      "value": "ubuntu-22.04",
+      "label": "Ubuntu 22.04 LTS"
+     },
+     {
+      "value": "ubuntu-24.04",
+      "label": "Ubuntu 24.04 LTS"
+     },
+     {
+      "value": "debian-11",
+      "label": "Debian 11"
+     },
+     {
+      "value": "debian-12",
+      "label": "Debian 12"
+     },
+     {
+      "value": "rocky-9",
+      "label": "Rocky Linux 9"
+     },
+     {
+      "value": "alma-9",
+      "label": "AlmaLinux 9"
+     }
+    ]
+   },
+   {
+    "id": 21,
+    "slug": "pinnacle-network-2",
+    "name": "pinnacle network - 邀请制会员专线 2号服务器",
+    "specs": {
+     "cpu": "2",
+     "ram_mb": "2048",
+     "disk_gb": "20",
+     "ip_type": "商业静态IP(非IDC机房)",
+     "ip_count": 1,
+     "location": "美国加州 莱克福里斯特 (Lake Forest)",
+     "line_badge": "网关升级版",
+     "traffic_gb": null,
+     "overage_mbps": null,
+     "bandwidth_mbps": "200",
+     "extra_ip_monthly_cents": 14800
+    },
+    "config_options": {
+     "bandwidth_mbps": [
+      {
+       "value": 200,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 300,
+       "delta_monthly_cents": 8800
+      },
+      {
+       "value": 500,
+       "delta_monthly_cents": 16800
+      }
+     ],
+     "ip_count": [
+      {
+       "value": 1,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 2,
+       "delta_monthly_cents": 14800
+      },
+      {
+       "value": 3,
+       "delta_monthly_cents": 29600
+      },
+      {
+       "value": 4,
+       "delta_monthly_cents": 44400
+      },
+      {
+       "value": 5,
+       "delta_monthly_cents": 59200
+      },
+      {
+       "value": 6,
+       "delta_monthly_cents": 74000
+      },
+      {
+       "value": 7,
+       "delta_monthly_cents": 88800
+      },
+      {
+       "value": 8,
+       "delta_monthly_cents": 103600
+      },
+      {
+       "value": 9,
+       "delta_monthly_cents": 118400
+      },
+      {
+       "value": 10,
+       "delta_monthly_cents": 133200
+      },
+      {
+       "value": 11,
+       "delta_monthly_cents": 148000
+      },
+      {
+       "value": 12,
+       "delta_monthly_cents": 162800
+      },
+      {
+       "value": 13,
+       "delta_monthly_cents": 177600
+      },
+      {
+       "value": 14,
+       "delta_monthly_cents": 192400
+      },
+      {
+       "value": 15,
+       "delta_monthly_cents": 207200
+      },
+      {
+       "value": 16,
+       "delta_monthly_cents": 222000
+      },
+      {
+       "value": 17,
+       "delta_monthly_cents": 236800
+      },
+      {
+       "value": 18,
+       "delta_monthly_cents": 251600
+      },
+      {
+       "value": 19,
+       "delta_monthly_cents": 266400
+      },
+      {
+       "value": 20,
+       "delta_monthly_cents": 281200
+      }
+     ]
+    },
+    "region": "US-OC-LAKEFOREST",
+    "no_discount": false,
+    "base_price_cents": 18800,
+    "monthly_list_cents": 18800,
+    "currency": "CNY",
+    "billing_cycles": [
+     {
+      "id": 80,
+      "period": "annually",
+      "price_cents": 180480,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 77,
+      "period": "monthly",
+      "price_cents": 18800,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 78,
+      "period": "quarterly",
+      "price_cents": 53580,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 79,
+      "period": "semiannually",
+      "price_cents": 101520,
+      "setup_fee_cents": 0
+     }
+    ],
+    "available": true,
+    "unavailable_reason": null,
+    "max_qty": 12,
+    "is_preorder": false,
+    "is_pool": false,
+    "coming_soon": false,
+    "preorder_note": null,
+    "pick_ip_fee_cents": 3000,
+    "pick_ip_available": 11,
+    "os_templates": [
+     {
+      "value": "ubuntu-22.04",
+      "label": "Ubuntu 22.04 LTS"
+     },
+     {
+      "value": "ubuntu-24.04",
+      "label": "Ubuntu 24.04 LTS"
+     },
+     {
+      "value": "debian-11",
+      "label": "Debian 11"
+     },
+     {
+      "value": "debian-12",
+      "label": "Debian 12"
+     },
+     {
+      "value": "rocky-9",
+      "label": "Rocky Linux 9"
+     },
+     {
+      "value": "alma-9",
+      "label": "AlmaLinux 9"
+     }
+    ]
+   },
+   {
+    "id": 22,
+    "slug": "home-pool",
+    "name": "美国加州 AT&T 家宽",
+    "specs": {
+     "cpu": 2,
+     "ram_mb": 2048,
+     "disk_gb": 20,
+     "ip_count": null,
+     "traffic_gb": null,
+     "overage_mbps": null,
+     "bandwidth_mbps": 80,
+     "extra_ip_monthly_cents": null
+    },
+    "config_options": {
+     "cpu": [
+      {
+       "value": 2,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 4,
+       "delta_monthly_cents": 4000
+      },
+      {
+       "value": 6,
+       "delta_monthly_cents": 8000
+      },
+      {
+       "value": 8,
+       "delta_monthly_cents": 10000
+      }
+     ],
+     "ram_mb": [
+      {
+       "value": 2048,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 4096,
+       "delta_monthly_cents": 12000
+      },
+      {
+       "value": 8192,
+       "delta_monthly_cents": 24000
+      }
+     ],
+     "disk_gb": [
+      {
+       "value": 20,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 40,
+       "delta_monthly_cents": 2000
+      }
+     ],
+     "bandwidth_mbps": [
+      {
+       "value": 80,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 100,
+       "delta_monthly_cents": 1000
+      },
+      {
+       "value": 200,
+       "delta_monthly_cents": 5800
+      },
+      {
+       "value": 300,
+       "delta_monthly_cents": 8800
+      }
+     ]
+    },
+    "region": null,
+    "no_discount": false,
+    "base_price_cents": 13800,
+    "monthly_list_cents": 13800,
+    "currency": "CNY",
+    "billing_cycles": [
+     {
+      "id": 81,
+      "period": "annually",
+      "price_cents": 132480,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 82,
+      "period": "monthly",
+      "price_cents": 13800,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 83,
+      "period": "quarterly",
+      "price_cents": 39330,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 84,
+      "period": "semiannually",
+      "price_cents": 74520,
+      "setup_fee_cents": 0
+     }
+    ],
+    "available": false,
+    "unavailable_reason": "sold_out",
+    "max_qty": 0,
+    "is_preorder": false,
+    "is_pool": true,
+    "coming_soon": false,
+    "preorder_note": null,
+    "pick_ip_fee_cents": 3000,
+    "pick_ip_available": 0,
+    "os_templates": [
+     {
+      "value": "ubuntu-22.04",
+      "label": "Ubuntu 22.04 LTS"
+     },
+     {
+      "value": "ubuntu-24.04",
+      "label": "Ubuntu 24.04 LTS"
+     },
+     {
+      "value": "debian-11",
+      "label": "Debian 11"
+     },
+     {
+      "value": "debian-12",
+      "label": "Debian 12"
+     },
+     {
+      "value": "rocky-9",
+      "label": "Rocky Linux 9"
+     },
+     {
+      "value": "almalinux-9",
+      "label": "AlmaLinux 9"
+     },
+     {
+      "value": "centos-7",
+      "label": "CentOS 7 (EOL)"
+     }
+    ]
+   },
+   {
+    "id": 23,
+    "slug": "pro-pool",
+    "name": "美国加州 AT&T 商业宽带 PRO",
+    "specs": {
+     "cpu": "2",
+     "ram_mb": "2048",
+     "disk_gb": "20",
+     "ip_type": "商业静态IP(非IDC机房)",
+     "ip_count": 1,
+     "location": "美国加州",
+     "traffic_gb": null,
+     "overage_mbps": null,
+     "bandwidth_mbps": "200",
+     "extra_ip_monthly_cents": 14800
+    },
+    "config_options": {
+     "bandwidth_mbps": [
+      {
+       "value": 200,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 300,
+       "delta_monthly_cents": 8800
+      },
+      {
+       "value": 500,
+       "delta_monthly_cents": 16800
+      }
+     ],
+     "ip_count": [
+      {
+       "value": 1,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 2,
+       "delta_monthly_cents": 14800
+      },
+      {
+       "value": 3,
+       "delta_monthly_cents": 29600
+      },
+      {
+       "value": 4,
+       "delta_monthly_cents": 44400
+      },
+      {
+       "value": 5,
+       "delta_monthly_cents": 59200
+      },
+      {
+       "value": 6,
+       "delta_monthly_cents": 74000
+      },
+      {
+       "value": 7,
+       "delta_monthly_cents": 88800
+      },
+      {
+       "value": 8,
+       "delta_monthly_cents": 103600
+      },
+      {
+       "value": 9,
+       "delta_monthly_cents": 118400
+      },
+      {
+       "value": 10,
+       "delta_monthly_cents": 133200
+      },
+      {
+       "value": 11,
+       "delta_monthly_cents": 148000
+      },
+      {
+       "value": 12,
+       "delta_monthly_cents": 162800
+      },
+      {
+       "value": 13,
+       "delta_monthly_cents": 177600
+      },
+      {
+       "value": 14,
+       "delta_monthly_cents": 192400
+      },
+      {
+       "value": 15,
+       "delta_monthly_cents": 207200
+      },
+      {
+       "value": 16,
+       "delta_monthly_cents": 222000
+      },
+      {
+       "value": 17,
+       "delta_monthly_cents": 236800
+      },
+      {
+       "value": 18,
+       "delta_monthly_cents": 251600
+      },
+      {
+       "value": 19,
+       "delta_monthly_cents": 266400
+      },
+      {
+       "value": 20,
+       "delta_monthly_cents": 281200
+      }
+     ]
+    },
+    "region": null,
+    "no_discount": false,
+    "base_price_cents": 18800,
+    "monthly_list_cents": 18800,
+    "currency": "CNY",
+    "billing_cycles": [
+     {
+      "id": 85,
+      "period": "annually",
+      "price_cents": 180480,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 86,
+      "period": "monthly",
+      "price_cents": 18800,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 87,
+      "period": "quarterly",
+      "price_cents": 53580,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 88,
+      "period": "semiannually",
+      "price_cents": 101520,
+      "setup_fee_cents": 0
+     }
+    ],
+    "available": false,
+    "unavailable_reason": "sold_out",
+    "max_qty": 0,
+    "is_preorder": false,
+    "is_pool": true,
+    "coming_soon": false,
+    "preorder_note": null,
+    "pick_ip_fee_cents": 3000,
+    "pick_ip_available": 0,
+    "os_templates": [
+     {
+      "value": "ubuntu-22.04",
+      "label": "Ubuntu 22.04 LTS"
+     },
+     {
+      "value": "ubuntu-24.04",
+      "label": "Ubuntu 24.04 LTS"
+     },
+     {
+      "value": "debian-11",
+      "label": "Debian 11"
+     },
+     {
+      "value": "debian-12",
+      "label": "Debian 12"
+     },
+     {
+      "value": "rocky-9",
+      "label": "Rocky Linux 9"
+     },
+     {
+      "value": "alma-9",
+      "label": "AlmaLinux 9"
+     }
+    ]
+   },
+   {
+    "id": 24,
+    "slug": "pro-gw-pool",
+    "name": "美国加州 AT&T 商业宽带 PRO · 网关升级版",
+    "specs": {
+     "cpu": "2",
+     "ram_mb": "2048",
+     "disk_gb": "20",
+     "ip_type": "商业静态IP(非IDC机房)",
+     "ip_count": 1,
+     "location": "美国加州 莱克福里斯特 (Lake Forest)",
+     "line_badge": "网关升级版",
+     "traffic_gb": null,
+     "overage_mbps": null,
+     "bandwidth_mbps": "200",
+     "extra_ip_monthly_cents": 14800
+    },
+    "config_options": {
+     "bandwidth_mbps": [
+      {
+       "value": 200,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 300,
+       "delta_monthly_cents": 8800
+      },
+      {
+       "value": 500,
+       "delta_monthly_cents": 16800
+      }
+     ],
+     "ip_count": [
+      {
+       "value": 1,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 2,
+       "delta_monthly_cents": 14800
+      },
+      {
+       "value": 3,
+       "delta_monthly_cents": 29600
+      },
+      {
+       "value": 4,
+       "delta_monthly_cents": 44400
+      },
+      {
+       "value": 5,
+       "delta_monthly_cents": 59200
+      },
+      {
+       "value": 6,
+       "delta_monthly_cents": 74000
+      },
+      {
+       "value": 7,
+       "delta_monthly_cents": 88800
+      },
+      {
+       "value": 8,
+       "delta_monthly_cents": 103600
+      },
+      {
+       "value": 9,
+       "delta_monthly_cents": 118400
+      },
+      {
+       "value": 10,
+       "delta_monthly_cents": 133200
+      },
+      {
+       "value": 11,
+       "delta_monthly_cents": 148000
+      },
+      {
+       "value": 12,
+       "delta_monthly_cents": 162800
+      },
+      {
+       "value": 13,
+       "delta_monthly_cents": 177600
+      },
+      {
+       "value": 14,
+       "delta_monthly_cents": 192400
+      },
+      {
+       "value": 15,
+       "delta_monthly_cents": 207200
+      },
+      {
+       "value": 16,
+       "delta_monthly_cents": 222000
+      },
+      {
+       "value": 17,
+       "delta_monthly_cents": 236800
+      },
+      {
+       "value": 18,
+       "delta_monthly_cents": 251600
+      },
+      {
+       "value": 19,
+       "delta_monthly_cents": 266400
+      },
+      {
+       "value": 20,
+       "delta_monthly_cents": 281200
+      }
+     ]
+    },
+    "region": null,
+    "no_discount": false,
+    "base_price_cents": 20000,
+    "monthly_list_cents": 20000,
+    "currency": "CNY",
+    "billing_cycles": [
+     {
+      "id": 89,
+      "period": "annually",
+      "price_cents": 192000,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 90,
+      "period": "monthly",
+      "price_cents": 20000,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 91,
+      "period": "quarterly",
+      "price_cents": 57000,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 92,
+      "period": "semiannually",
+      "price_cents": 108000,
+      "setup_fee_cents": 0
+     }
+    ],
+    "available": false,
+    "unavailable_reason": "sold_out",
+    "max_qty": 0,
+    "is_preorder": false,
+    "is_pool": true,
+    "coming_soon": false,
+    "preorder_note": null,
+    "pick_ip_fee_cents": 3000,
+    "pick_ip_available": 0,
+    "os_templates": [
+     {
+      "value": "ubuntu-22.04",
+      "label": "Ubuntu 22.04 LTS"
+     },
+     {
+      "value": "ubuntu-24.04",
+      "label": "Ubuntu 24.04 LTS"
+     },
+     {
+      "value": "debian-11",
+      "label": "Debian 11"
+     },
+     {
+      "value": "debian-12",
+      "label": "Debian 12"
+     },
+     {
+      "value": "rocky-9",
+      "label": "Rocky Linux 9"
+     },
+     {
+      "value": "alma-9",
+      "label": "AlmaLinux 9"
+     }
+    ]
+   },
+   {
+    "id": 32,
+    "slug": "pro-gw-mini-pool",
+    "name": "特价 · 美国加州 AT&T 商业宽带 PRO 网关升级版 轻量版",
+    "specs": {
+     "cpu": 1,
+     "ram_mb": 1024,
+     "disk_gb": 10,
+     "ip_type": "商业静态IP(非IDC机房)",
+     "ip_count": 1,
+     "location": "美国加州 莱克福里斯特 (Lake Forest)",
+     "line_badge": "网关升级版",
+     "traffic_gb": null,
+     "no_discount": true,
+     "overage_mbps": null,
+     "bandwidth_mbps": 200,
+     "extra_ip_monthly_cents": null
+    },
+    "config_options": [],
+    "region": null,
+    "no_discount": true,
+    "base_price_cents": 14800,
+    "monthly_list_cents": 14800,
+    "currency": "CNY",
+    "billing_cycles": [
+     {
+      "id": 105,
+      "period": "monthly",
+      "price_cents": 14800,
+      "setup_fee_cents": 0
+     }
+    ],
+    "available": false,
+    "unavailable_reason": "sold_out",
+    "max_qty": 0,
+    "is_preorder": false,
+    "is_pool": true,
+    "coming_soon": false,
+    "preorder_note": null,
+    "pick_ip_fee_cents": null,
+    "pick_ip_available": null,
+    "os_templates": [
+     {
+      "value": "ubuntu-22.04",
+      "label": "Ubuntu 22.04 LTS"
+     },
+     {
+      "value": "ubuntu-24.04",
+      "label": "Ubuntu 24.04 LTS"
+     },
+     {
+      "value": "debian-11",
+      "label": "Debian 11"
+     },
+     {
+      "value": "debian-12",
+      "label": "Debian 12"
+     },
+     {
+      "value": "rocky-9",
+      "label": "Rocky Linux 9"
+     },
+     {
+      "value": "alma-9",
+      "label": "AlmaLinux 9"
+     }
+    ]
+   },
+   {
+    "id": 52,
+    "slug": "zcj-9950x",
+    "name": "祖传鸡 · AMD Ryzen 9 9950X",
+    "specs": {
+     "cpu": 1,
+     "ram_mb": 1024,
+     "disk_gb": 10,
+     "ip_type": "商业静态IP(非IDC机房)",
+     "ip_count": 1,
+     "location": "美国加州",
+     "ram_type": "DDR5-6000",
+     "cpu_model": "AMD Ryzen 9 9950X",
+     "disk_type": "SSD",
+     "launch_eta": {
+      "en": "Expected live by Nov 22 (US Pacific)",
+      "zh": "预计 11 月 22 日前开通（美国西部时间）"
+     },
+     "line_badge": "网关升级版",
+     "traffic_gb": null,
+     "no_discount": true,
+     "overage_mbps": null,
+     "bandwidth_mbps": 100,
+     "extra_ip_monthly_cents": null
+    },
+    "config_options": {
+     "bandwidth_mbps": [
+      {
+       "value": 100,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 200,
+       "delta_monthly_cents": 5800
+      },
+      {
+       "value": 300,
+       "delta_monthly_cents": 8800
+      },
+      {
+       "value": 500,
+       "delta_monthly_cents": 16800
+      }
+     ]
+    },
+    "region": null,
+    "no_discount": true,
+    "base_price_cents": 6000,
+    "monthly_list_cents": 6000,
+    "currency": "CNY",
+    "billing_cycles": [
+     {
+      "id": 150,
+      "period": "annually",
+      "price_cents": 72000,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 147,
+      "period": "monthly",
+      "price_cents": 6000,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 148,
+      "period": "quarterly",
+      "price_cents": 18000,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 149,
+      "period": "semiannually",
+      "price_cents": 36000,
+      "setup_fee_cents": 0
+     }
+    ],
+    "available": false,
+    "unavailable_reason": "closed",
+    "max_qty": 0,
+    "is_preorder": true,
+    "is_pool": false,
+    "coming_soon": false,
+    "preorder_note": "抽签中签订单:机器预计 11 月 22 日(美国西部时间)前开通,到期日从开通当天起算。",
+    "pick_ip_fee_cents": null,
+    "pick_ip_available": null,
+    "os_templates": [
+     {
+      "value": "ubuntu-22.04",
+      "label": "Ubuntu 22.04 LTS"
+     },
+     {
+      "value": "ubuntu-24.04",
+      "label": "Ubuntu 24.04 LTS"
+     },
+     {
+      "value": "debian-11",
+      "label": "Debian 11"
+     },
+     {
+      "value": "debian-12",
+      "label": "Debian 12"
+     },
+     {
+      "value": "debian-13",
+      "label": "Debian 13"
+     },
+     {
+      "value": "rocky-9",
+      "label": "Rocky Linux 9"
+     },
+     {
+      "value": "almalinux-9",
+      "label": "AlmaLinux 9"
+     },
+     {
+      "value": "centos-7",
+      "label": "CentOS 7 (EOL)"
+     }
+    ]
+   },
+   {
+    "id": 48,
+    "slug": "pro-mini-pool-pomona",
+    "name": "特价 · 美国加州 AT&T 商业宽带 PRO 轻量版 · 波莫纳",
+    "specs": {
+     "cpu": 1,
+     "ram_mb": 1024,
+     "disk_gb": 10,
+     "ip_type": "商业静态IP(非IDC机房)",
+     "ip_count": 1,
+     "location": "美国加州 波莫纳 (Pomona)",
+     "traffic_gb": null,
+     "no_discount": true,
+     "overage_mbps": null,
+     "bandwidth_mbps": 200,
+     "extra_ip_monthly_cents": null
+    },
+    "config_options": [],
+    "region": null,
+    "no_discount": true,
+    "base_price_cents": 14800,
+    "monthly_list_cents": 14800,
+    "currency": "CNY",
+    "billing_cycles": [
+     {
+      "id": 137,
+      "period": "monthly",
+      "price_cents": 14800,
+      "setup_fee_cents": 0
+     }
+    ],
+    "available": false,
+    "unavailable_reason": "sold_out",
+    "max_qty": 0,
+    "is_preorder": false,
+    "is_pool": true,
+    "coming_soon": false,
+    "preorder_note": null,
+    "pick_ip_fee_cents": null,
+    "pick_ip_available": null,
+    "os_templates": [
+     {
+      "value": "ubuntu-22.04",
+      "label": "Ubuntu 22.04 LTS"
+     },
+     {
+      "value": "ubuntu-24.04",
+      "label": "Ubuntu 24.04 LTS"
+     },
+     {
+      "value": "debian-11",
+      "label": "Debian 11"
+     },
+     {
+      "value": "debian-12",
+      "label": "Debian 12"
+     },
+     {
+      "value": "rocky-9",
+      "label": "Rocky Linux 9"
+     },
+     {
+      "value": "alma-9",
+      "label": "AlmaLinux 9"
+     }
+    ]
+   },
+   {
+    "id": 11,
+    "slug": "frontier1",
+    "name": "美国加州Frontier商宽",
+    "specs": {
+     "cpu": 2,
+     "ram_mb": 2048,
+     "carrier": "Frontier",
+     "disk_gb": 20,
+     "ip_type": "商业静态IP(非IDC机房)",
+     "ip_count": null,
+     "traffic_gb": null,
+     "overage_mbps": null,
+     "bandwidth_mbps": 200,
+     "extra_ip_monthly_cents": null
+    },
+    "config_options": {
+     "bandwidth_mbps": [
+      {
+       "value": 200,
+       "delta_monthly_cents": 0
+      },
+      {
+       "value": 300,
+       "delta_monthly_cents": 8800
+      },
+      {
+       "value": 500,
+       "delta_monthly_cents": 16800
+      }
+     ]
+    },
+    "region": null,
+    "no_discount": false,
+    "base_price_cents": 18800,
+    "monthly_list_cents": 18800,
+    "currency": "CNY",
+    "billing_cycles": [
+     {
+      "id": 37,
+      "period": "annually",
+      "price_cents": 180480,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 38,
+      "period": "monthly",
+      "price_cents": 18800,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 39,
+      "period": "quarterly",
+      "price_cents": 53580,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 40,
+      "period": "semiannually",
+      "price_cents": 101520,
+      "setup_fee_cents": 0
+     }
+    ],
+    "available": false,
+    "unavailable_reason": "sold_out",
+    "max_qty": 0,
+    "is_preorder": false,
+    "is_pool": false,
+    "coming_soon": false,
+    "preorder_note": null,
+    "pick_ip_fee_cents": 3000,
+    "pick_ip_available": 0,
+    "os_templates": [
+     {
+      "value": "ubuntu-22.04",
+      "label": "Ubuntu 22.04 LTS"
+     },
+     {
+      "value": "ubuntu-24.04",
+      "label": "Ubuntu 24.04 LTS"
+     },
+     {
+      "value": "debian-11",
+      "label": "Debian 11"
+     },
+     {
+      "value": "debian-12",
+      "label": "Debian 12"
+     },
+     {
+      "value": "rocky-9",
+      "label": "Rocky Linux 9"
+     },
+     {
+      "value": "almalinux-9",
+      "label": "AlmaLinux 9"
+     }
+    ]
+   },
+   {
+    "id": 13,
+    "slug": "att-dedicated-1",
+    "name": "美国加州AT&T独享线路",
+    "specs": {
+     "cpu": 4,
+     "ram_mb": 4096,
+     "carrier": "AT&T",
+     "disk_gb": 60,
+     "ip_type": "独享公网IP(宽带接入地址)",
+     "ip_count": 1,
+     "traffic_gb": 4000,
+     "overage_mbps": null,
+     "bandwidth_mbps": 500,
+     "bandwidth_max_mbps": 1000,
+     "extra_ip_monthly_cents": null
+    },
+    "config_options": [],
+    "region": null,
+    "no_discount": false,
+    "base_price_cents": 50000,
+    "monthly_list_cents": 50000,
+    "currency": "CNY",
+    "billing_cycles": [
+     {
+      "id": 48,
+      "period": "annually",
+      "price_cents": 480000,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 45,
+      "period": "monthly",
+      "price_cents": 50000,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 46,
+      "period": "quarterly",
+      "price_cents": 142500,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 47,
+      "period": "semiannually",
+      "price_cents": 270000,
+      "setup_fee_cents": 0
+     }
+    ],
+    "available": false,
+    "unavailable_reason": "sold_out",
+    "max_qty": 0,
+    "is_preorder": false,
+    "is_pool": false,
+    "coming_soon": false,
+    "preorder_note": null,
+    "pick_ip_fee_cents": null,
+    "pick_ip_available": null,
+    "os_templates": [
+     {
+      "value": "ubuntu-22.04",
+      "label": "Ubuntu 22.04 LTS"
+     },
+     {
+      "value": "ubuntu-24.04",
+      "label": "Ubuntu 24.04 LTS"
+     },
+     {
+      "value": "debian-11",
+      "label": "Debian 11"
+     },
+     {
+      "value": "debian-12",
+      "label": "Debian 12"
+     },
+     {
+      "value": "rocky-9",
+      "label": "Rocky Linux 9"
+     },
+     {
+      "value": "almalinux-9",
+      "label": "AlmaLinux 9"
+     },
+     {
+      "value": "centos-7",
+      "label": "CentOS 7 (EOL)"
+     }
+    ]
+   },
+   {
+    "id": 25,
+    "slug": "att-dedicated-vf-1",
+    "name": "美国加州AT&T独享线路",
+    "specs": {
+     "cpu": 4,
+     "ram_mb": 4096,
+     "carrier": "AT&T",
+     "disk_gb": 60,
+     "ip_type": "独享公网IP(宽带接入地址)",
+     "ip_count": 1,
+     "location": "美国加州 洛杉矶东区 / 橙县 (El Monte / Rosemead / Lake Forest)",
+     "traffic_gb": 4000,
+     "overage_mbps": null,
+     "bandwidth_mbps": 500,
+     "bandwidth_max_mbps": 1000,
+     "extra_ip_monthly_cents": null
+    },
+    "config_options": [],
+    "region": null,
+    "no_discount": false,
+    "base_price_cents": 50000,
+    "monthly_list_cents": 50000,
+    "currency": "CNY",
+    "billing_cycles": [
+     {
+      "id": 93,
+      "period": "annually",
+      "price_cents": 480000,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 94,
+      "period": "monthly",
+      "price_cents": 50000,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 95,
+      "period": "quarterly",
+      "price_cents": 142500,
+      "setup_fee_cents": 0
+     },
+     {
+      "id": 96,
+      "period": "semiannually",
+      "price_cents": 270000,
+      "setup_fee_cents": 0
+     }
+    ],
+    "available": false,
+    "unavailable_reason": "sold_out",
+    "max_qty": 0,
+    "is_preorder": false,
+    "is_pool": false,
+    "coming_soon": false,
+    "preorder_note": null,
+    "pick_ip_fee_cents": null,
+    "pick_ip_available": null,
+    "os_templates": [
+     {
+      "value": "ubuntu-22.04",
+      "label": "Ubuntu 22.04 LTS"
+     },
+     {
+      "value": "ubuntu-24.04",
+      "label": "Ubuntu 24.04 LTS"
+     },
+     {
+      "value": "debian-11",
+      "label": "Debian 11"
+     },
+     {
+      "value": "debian-12",
+      "label": "Debian 12"
+     },
+     {
+      "value": "rocky-9",
+      "label": "Rocky Linux 9"
+     },
+     {
+      "value": "almalinux-9",
+      "label": "AlmaLinux 9"
+     },
+     {
+      "value": "centos-7",
+      "label": "CentOS 7 (EOL)"
+     }
+    ]
+   }
+  ],
+  "selectedProduct": null,
+  "gateways": [
+   "stripe",
+   "qianjimiao"
+  ],
+  "balanceCents": 0,
+  "isGuest": true
+ },
+ "url": "/orders/create",
+ "version": "bef6ef1886cce518380f912f8bbde68f",
+ "clearHistory": false,
+ "encryptHistory": false
+}

@@ -1,0 +1,21 @@
+[Unit]
+Description=restockd VPS restock monitor
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=restockd
+Group=restockd
+EnvironmentFile=/etc/restockd/restockd.env
+ExecStart=/opt/restockd/restockd -data /var/lib/restockd
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/restockd
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
