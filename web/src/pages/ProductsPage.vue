@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// 商品页：站点 / 库存多选筛选（窄屏芯片、宽屏侧栏，状态存在 URL）+ 关键词，卡片或表格视图；点商品下单，一键关注、立即刷新
+// 商品页：站点 / 库存多选筛选（窄屏芯片、宽屏侧栏，状态存在 URL）+ 关键词，卡片或表格视图。
+// 标题是商品页外链；卡片 / 行其余区域点击打开详情（下单）；刷新为图标按钮；关注与更多操作见 ProductActions
 import { useIsMobile } from '@/composables/useIsMobile'
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
-  NButton,
   NCard,
   NDataTable,
   NEmpty,
@@ -30,6 +30,9 @@ import FilterGroup, { type FilterOption } from '@/components/FilterGroup.vue'
 import LastOrderTag from '@/components/LastOrderTag.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import ProductActions from '@/components/ProductActions.vue'
+import ProductTitle from '@/components/ProductTitle.vue'
+import RefreshIconButton from '@/components/RefreshIconButton.vue'
 import ProductOrderDrawer from '@/components/ProductOrderDrawer.vue'
 import SpecLine from '@/components/SpecLine.vue'
 import StockBadge from '@/components/StockBadge.vue'
@@ -203,13 +206,15 @@ function openOrder(product: Product): void {
 const rowKey = (row: Product): string => `${row.site_id}/${row.id}`
 
 function renderName(row: Product) {
-  const name = h('span', { class: 'product-link', onClick: () => openOrder(row) }, row.name)
   const tags = [
     row.no_discount ? h(NTag, { size: 'tiny', type: 'warning', bordered: false }, () => '优惠不可用') : null,
-    row.last_order ? h(LastOrderTag, { order: row.last_order }) : null,
+    row.last_order ? h('span', { onClick: (event: MouseEvent) => event.stopPropagation() }, [h(LastOrderTag, { order: row.last_order })]) : null,
   ]
-  return h('div', [name, h(NSpace, { size: 4, style: 'margin-top: 2px' }, () => tags)])
+  return h('div', [h(ProductTitle, { name: row.name, url: row.url }), h(NSpace, { size: 4, style: 'margin-top: 2px' }, () => tags)])
 }
+
+// 刷新图标按钮：轮询商品所在站点（同站点共用加载态）
+const renderRefresh = (product: Product) => h(RefreshIconButton, { loading: isBusy(product.site_id), onClick: () => void pollSite(product) })
 
 function renderPrices(row: Product) {
   if (row.prices.length === 0) return h(NText, { depth: 3 }, () => '-')
@@ -226,16 +231,17 @@ function renderPrices(row: Product) {
 }
 
 function renderActions(row: Product) {
-  if (row.hidden) return h(NButton, { size: 'small', onClick: () => void restoreProduct(row) }, () => '恢复')
-  return h(NSpace, { size: 4, align: 'center', wrap: false }, () => [
-    h(NButton, { size: 'small', type: 'warning', secondary: true, onClick: () => openOrder(row) }, () => '下单'),
-    row.watched
-      ? h(NButton, { size: 'tiny', text: true, type: 'primary', onClick: () => openWatch(row) }, () => '再加关注')
-      : h(NButton, { size: 'small', type: 'primary', secondary: true, onClick: () => openWatch(row) }, () => '关注'),
-    h(NButton, { size: 'tiny', text: true, loading: isBusy(row.site_id), onClick: () => void pollSite(row) }, () => '立即刷新'),
-    h(NButton, { size: 'tiny', text: true, onClick: () => void hideProduct(row) }, () => '屏蔽'),
-  ])
+  return h(ProductActions, {
+    product: row,
+    onOpen: () => openOrder(row),
+    onWatch: () => openWatch(row),
+    onHide: () => void hideProduct(row),
+    onRestore: () => void restoreProduct(row),
+  })
 }
+
+// 整行可点击打开详情（标题外链、操作区自行阻止冒泡）
+const rowProps = (row: Product) => ({ style: 'cursor: pointer', onClick: () => openOrder(row) })
 
 const columns = computed<DataTableColumns<Product>>(() => [
   { title: '商品', key: 'name', minWidth: 220, render: renderName },
@@ -243,8 +249,13 @@ const columns = computed<DataTableColumns<Product>>(() => [
   { title: '库存', key: 'stock', width: 100, render: (row) => h(StockBadge, { stock: row.stock }) },
   { title: '规格', key: 'specs', minWidth: 200, render: (row) => h(SpecLine, { specs: row.specs }) },
   { title: '价格', key: 'prices', width: 170, render: renderPrices },
-  { title: '更新', key: 'fetched_at', width: 90, render: (row) => h(TimeAgo, { value: row.fetched_at }) },
-  { title: '操作', key: 'actions', width: 270, fixed: isMobile.value ? undefined : 'right', render: renderActions },
+  {
+    title: '更新',
+    key: 'fetched_at',
+    width: 120,
+    render: (row) => h('span', { style: 'display: inline-flex; align-items: center; gap: 2px' }, [h(TimeAgo, { value: row.fetched_at }), renderRefresh(row)]),
+  },
+  { title: '操作', key: 'actions', width: 150, fixed: isMobile.value ? undefined : 'right', render: renderActions },
 ])
 </script>
 
@@ -276,18 +287,24 @@ const columns = computed<DataTableColumns<Product>>(() => [
           </n-empty>
 
           <div v-else-if="view === 'cards'" class="grid-cards">
-            <n-card v-for="product in visibleProducts" :key="rowKey(product)" size="small" hoverable class="product-card">
+            <n-card
+              v-for="product in visibleProducts"
+              :key="rowKey(product)"
+              size="small"
+              hoverable
+              class="product-card"
+              @click="openOrder(product)"
+            >
               <template #header>
-                <span class="product-link" @click="openOrder(product)">{{ product.name }}</span>
+                <ProductTitle :name="product.name" :url="product.url" />
               </template>
               <template #header-extra>
                 <stock-badge :stock="product.stock" />
               </template>
-              <n-space vertical :size="8" class="body" @click="openOrder(product)">
+              <n-space vertical :size="8">
                 <n-space :size="6" align="center">
                   <n-text depth="3" style="font-size: 12px">{{ siteNames[product.site_id] ?? product.site_id }}</n-text>
                   <n-tag v-if="product.no_discount" size="tiny" type="warning" :bordered="false">优惠不可用</n-tag>
-                  <a v-if="product.url" :href="product.url" target="_blank" rel="noopener noreferrer" class="external" @click.stop>商品页</a>
                 </n-space>
                 <spec-line :specs="product.specs" />
                 <div class="price-list">
@@ -298,26 +315,37 @@ const columns = computed<DataTableColumns<Product>>(() => [
                   <n-text v-if="product.prices.length === 0" depth="3">暂无价格</n-text>
                 </div>
               </n-space>
-              <LastOrderTag v-if="product.last_order" :order="product.last_order" class="last-order" />
+              <div v-if="product.last_order" class="last-order" @click.stop>
+                <LastOrderTag :order="product.last_order" />
+              </div>
               <template #footer>
                 <div class="card-footer">
-                  <n-text depth="3" style="font-size: 12px">
-                    更新于 <time-ago :value="product.fetched_at" />
-                    <n-button text size="tiny" :loading="isBusy(product.site_id)" style="margin-left: 6px" @click="pollSite(product)">立即刷新</n-button>
-                  </n-text>
-                  <n-button v-if="product.hidden" size="small" @click="restoreProduct(product)">恢复</n-button>
-                  <n-space v-else :size="4" align="center" :wrap="false">
-                    <n-button size="tiny" text @click="hideProduct(product)">屏蔽</n-button>
-                    <n-button size="small" type="warning" secondary @click="openOrder(product)">下单</n-button>
-                    <n-button v-if="!product.watched" size="small" type="primary" secondary @click="openWatch(product)">关注</n-button>
-                    <n-button v-else size="tiny" text type="primary" @click="openWatch(product)">再加关注</n-button>
-                  </n-space>
+                  <span class="updated" @click.stop>
+                    <n-text depth="3">更新于 <time-ago :value="product.fetched_at" /></n-text>
+                    <RefreshIconButton :loading="isBusy(product.site_id)" @click="pollSite(product)" />
+                  </span>
+                  <ProductActions
+                    :product="product"
+                    @open="openOrder(product)"
+                    @watch="openWatch(product)"
+                    @hide="hideProduct(product)"
+                    @restore="restoreProduct(product)"
+                  />
                 </div>
               </template>
             </n-card>
           </div>
 
-          <n-data-table v-else :columns="columns" :data="visibleProducts" :row-key="rowKey" :scroll-x="1000" size="small" :bordered="false" />
+          <n-data-table
+            v-else
+            :columns="columns"
+            :data="visibleProducts"
+            :row-key="rowKey"
+            :row-props="rowProps"
+            :scroll-x="1000"
+            size="small"
+            :bordered="false"
+          />
         </n-spin>
       </main>
     </div>
@@ -360,15 +388,11 @@ const columns = computed<DataTableColumns<Product>>(() => [
   min-width: 0;
   word-break: break-word;
 }
-:deep(.product-link),
-.body {
+.product-card {
   cursor: pointer;
 }
-:deep(.product-link:hover) {
-  text-decoration: underline;
-}
-.external {
-  font-size: 12px;
+.product-card :deep(.n-card__footer) {
+  cursor: default;
 }
 .last-order {
   margin-top: 8px;
@@ -385,9 +409,15 @@ const columns = computed<DataTableColumns<Product>>(() => [
 }
 .card-footer {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+.updated {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  cursor: default;
 }
 </style>
