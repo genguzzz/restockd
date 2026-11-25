@@ -156,14 +156,19 @@ func (f *fakeWHMCS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type recordingSolver struct {
+	mu        sync.Mutex
 	challenge solver.Challenge
 	token     string
+	calls     int
 }
 
 func (s *recordingSolver) Name() string              { return "test" }
 func (s *recordingSolver) Supports(solver.Kind) bool { return true }
 func (s *recordingSolver) Solve(_ context.Context, challenge solver.Challenge) (solver.Solution, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.challenge = challenge
+	s.calls++
 	return solver.Solution{Token: s.token}, nil
 }
 
@@ -440,5 +445,29 @@ func TestConfigureFormPrefersRealForm(t *testing.T) {
 	fallback, _ := goquery.NewDocumentFromReader(strings.NewReader(`<form action="cart.php?a=confproduct"></form><form action="/cart.php?a=confproduct"><input name="hostname"/><input name="rootpw"/></form>`))
 	if form := configureForm(fallback); form == nil || form.Find(`input[name="rootpw"]`).Length() != 1 {
 		t.Fatal("without the id, the confproduct form with most fields wins")
+	}
+}
+
+// 见过结算页验证码后，下一单在开始时就预取求解，结算时直接用（只解一次）；结果附分步耗时。
+func TestPlaceOrderPrefetchesKnownCaptcha(t *testing.T) {
+	fake := &fakeWHMCS{inStock: true, captcha: true}
+	slv := &recordingSolver{token: "RECAPTCHA-TOKEN"}
+	p, env := newOrderEnv(t, fake, slv)
+	spec := domain.OrderSpec{ProductID: "41", Cycle: domain.CycleMonthly}
+	if _, err := p.PlaceOrder(context.Background(), env, spec); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.knownCheckoutCaptcha(); !ok || slv.calls != 1 {
+		t.Fatalf("first order must learn the captcha and solve once, calls=%d", slv.calls)
+	}
+	result, err := p.PlaceOrder(context.Background(), env, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slv.calls != 2 || fake.checkout.Get("g-recaptcha-response") != "RECAPTCHA-TOKEN" {
+		t.Fatalf("second order must reuse the prefetched token (one solve per order), calls=%d", slv.calls)
+	}
+	if !strings.Contains(result.Message, "timings: cart=") || !strings.Contains(result.Message, "submit=") {
+		t.Fatalf("result must carry step timings: %q", result.Message)
 	}
 }

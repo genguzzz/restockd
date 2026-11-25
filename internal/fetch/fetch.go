@@ -33,6 +33,8 @@ type Request struct {
 	Form url.Values
 	// JSON 非空时按 application/json 发送（优先级低于 Form）。
 	JSON []byte
+	// NoRedirect 不跟随重定向，直接返回 3xx（结果页用不上时省一次往返）。
+	NoRedirect bool
 }
 
 // Response 抓取响应，Body 已完整读取。
@@ -203,6 +205,9 @@ func (c *HTTPClient) Do(ctx context.Context, session *Session, req *Request) (*R
 		return nil, err
 	}
 	client := &http.Client{Transport: c.transport, Timeout: c.timeout, Jar: session.Jar()}
+	if req.NoRedirect {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
 	httpResp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, err

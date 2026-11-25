@@ -48,7 +48,10 @@ func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Cre
 		values.Set("token", htmlutil.CSRFToken(loginPage.doc, loginPage.resp.Body))
 	}
 	formURL := loginPage.resp.URL
-	if err := solveCaptcha(ctx, env, loginPage, values, captchaLogin, formURL, env.Site.Name+" 登录"); err != nil {
+	if captcha, _, ok := detectAddonCaptcha(loginPage.resp.Body, captchaCheckout); ok {
+		p.rememberCheckoutCaptcha(captcha)
+	}
+	if err := solveCaptcha(ctx, env, loginPage, values, captchaLogin, formURL, env.Site.Name+" 登录", nil); err != nil {
 		return provider.SessionInfo{}, err
 	}
 	action := htmlutil.Resolve(formURL, form.AttrOr("action", formURL))

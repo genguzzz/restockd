@@ -62,6 +62,8 @@ type Provider struct {
 	only    map[string]bool
 	mu      sync.RWMutex
 	props   *checkoutProps
+	// turnstileKey 全站统一的 Turnstile sitekey（下单页 / 登录页 props 里都有），锁单时据此提前求解。
+	turnstileKey string
 }
 
 var (
@@ -398,11 +400,14 @@ func (p *Provider) loadCheckout(ctx context.Context, env provider.Env) (*checkou
 	if err := json.Unmarshal(data.Props, &props); err != nil {
 		return nil, "", fmt.Errorf("decode props: %w", err)
 	}
+	p.mu.Lock()
 	if len(props.Products) > 0 {
-		p.mu.Lock()
 		p.props = &props
-		p.mu.Unlock()
 	}
+	if props.TurnstileSiteKey != "" {
+		p.turnstileKey = props.TurnstileSiteKey
+	}
+	p.mu.Unlock()
 	return &props, data.Version, nil
 }
 
@@ -625,6 +630,14 @@ func (p *Provider) ensureSession(ctx context.Context, env provider.Env) (*checko
 
 // PlaceOrder 锁单：提交购物车结算，成功后站点跳转到账单页（未支付）。
 func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain.OrderSpec) (domain.OrderResult, error) {
+	timings := provider.NewTimings()
+	purpose := fmt.Sprintf("%s 锁单 %s", env.Site.Name, spec.ProductID)
+	var pre *provider.Prefetch
+	if key := p.knownTurnstileKey(); key != "" && !spec.DryRun {
+		// 读下单页、算价的同时在后台解 Turnstile。
+		pre = env.Prefetch(ctx, p.cartChallenge(key, purpose))
+		defer pre.Stop()
+	}
 	props, version, err := p.ensureSession(ctx, env)
 	if err != nil {
 		return domain.OrderResult{}, err
@@ -647,8 +660,9 @@ func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain
 	if gateway == "" && len(props.Gateways) > 0 {
 		gateway = props.Gateways[0]
 	}
+	timings.Lap("prepare")
 	if spec.DryRun {
-		return domain.OrderResult{Total: quote.Total, Message: fmt.Sprintf("dry run: product available, gateway=%s, turnstile=%t", gateway, props.TurnstileSiteKey != "")}, nil
+		return domain.OrderResult{Total: quote.Total, Message: fmt.Sprintf("dry run: product available, gateway=%s, turnstile=%t; %s", gateway, props.TurnstileSiteKey != "", timings)}, nil
 	}
 	item, err := buildItem(product, spec)
 	if err != nil {
@@ -663,17 +677,33 @@ func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain
 		"purchase_terms_ack": true,
 	}
 	if props.TurnstileSiteKey != "" {
-		solution, err := env.Solve(ctx, solver.Challenge{Kind: solver.KindTurnstile, SiteKey: props.TurnstileSiteKey, PageURL: p.baseURL + "/cart", Purpose: fmt.Sprintf("%s 锁单 %s", env.Site.Name, product.Slug)})
+		solution, err := pre.Solve(ctx, env, p.cartChallenge(props.TurnstileSiteKey, purpose))
 		if err != nil {
 			return domain.OrderResult{}, err
 		}
 		payload["cf_turnstile_response"] = solution.Token
 	}
+	timings.Lap("captcha_wait")
+	timings.Note("captcha_solve", pre.Elapsed())
 	resp, err := p.postJSON(ctx, env, "/cart/checkout", payload, version)
 	if err != nil {
 		return domain.OrderResult{}, err
 	}
-	return parseCheckoutResult(resp, p.baseURL, quote)
+	timings.Lap("submit")
+	result, err := parseCheckoutResult(resp, p.baseURL, quote)
+	result.Message = timings.Append(result.Message)
+	return result, err
+}
+
+// cartChallenge 结算用的 Turnstile（站点前端在 /cart 页渲染）。
+func (p *Provider) cartChallenge(siteKey, purpose string) solver.Challenge {
+	return solver.Challenge{Kind: solver.KindTurnstile, SiteKey: siteKey, PageURL: p.baseURL + "/cart", Purpose: purpose}
+}
+
+func (p *Provider) knownTurnstileKey() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.turnstileKey
 }
 
 var invoicePathPattern = regexp.MustCompile(`^/invoices/(\d+)/?$`)

@@ -43,6 +43,9 @@ func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Cre
 	}
 	payload := map[string]any{"email": creds.Username, "password": creds.Password, "remember": true, "cf_turnstile_response": ""}
 	if props.TurnstileSiteKey != "" {
+		p.mu.Lock()
+		p.turnstileKey = props.TurnstileSiteKey
+		p.mu.Unlock()
 		solution, err := env.Solve(ctx, solver.Challenge{Kind: solver.KindTurnstile, SiteKey: props.TurnstileSiteKey, PageURL: p.baseURL + "/login", Purpose: env.Site.Name + " 登录"})
 		if err != nil {
 			return provider.SessionInfo{}, err

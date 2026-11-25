@@ -151,10 +151,20 @@ func (p *Provider) Quote(ctx context.Context, env provider.Env, spec domain.Orde
 
 // PlaceOrder 锁单：提交结算表单，生成未支付订单与账单（不付款）。
 func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain.OrderSpec) (domain.OrderResult, error) {
+	timings := provider.NewTimings()
+	purpose := fmt.Sprintf("%s 锁单 pid=%s", env.Site.Name, spec.ProductID)
+	checkoutURL := p.baseURL + "/cart.php?a=checkout"
+	var pre *provider.Prefetch
+	if captcha, ok := p.knownCheckoutCaptcha(); ok && !spec.DryRun {
+		// 加购到打开结算页要好几个往返，验证码同时在后台解。
+		pre = env.Prefetch(ctx, captcha.challenge(checkoutURL, purpose))
+		defer pre.Stop()
+	}
 	checkout, quote, promo, err := p.prepareCheckout(ctx, env, spec)
 	if err != nil {
 		return domain.OrderResult{}, err
 	}
+	timings.Lap("cart")
 	if spec.Coupon != "" && promo == promoRejected {
 		return domain.OrderResult{Total: quote.Total}, fmt.Errorf("%w: %s: %s", provider.ErrCouponInvalid, spec.Coupon, quote.Message)
 	}
@@ -169,21 +179,26 @@ func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain
 		if found, ok := detectCaptcha(checkout.doc, checkout.resp.Body, captchaCheckout); ok {
 			captcha = string(found.kind)
 		}
-		message := fmt.Sprintf("dry run: stopped before checkout submit; gateway=%s, captcha=%s", gateway, captcha)
+		message := fmt.Sprintf("dry run: stopped before checkout submit; gateway=%s, captcha=%s; %s", gateway, captcha, timings)
 		if quote.Message != "" {
 			message += "; " + quote.Message
 		}
 		return domain.OrderResult{Total: quote.Total, Message: message}, nil
 	}
-	form, err := p.checkoutForm(ctx, env, checkout, spec)
+	form, err := p.checkoutForm(ctx, env, checkout, spec, pre, purpose)
 	if err != nil {
 		return domain.OrderResult{}, err
 	}
+	timings.Lap("captcha_wait")
+	timings.Note("captcha_solve", pre.Elapsed())
 	done, err := p.post(ctx, env, "/cart.php?a=checkout", form)
 	if err != nil {
 		return domain.OrderResult{}, err
 	}
-	return parseCompletion(done, p.baseURL, quote)
+	timings.Lap("submit")
+	result, err := parseCompletion(done, p.baseURL, quote)
+	result.Message = timings.Append(result.Message)
+	return result, err
 }
 
 // prepareCheckout 清空购物车并把目标商品放入，应用优惠码，返回结算页、报价与优惠码结果（无优惠码为 promoUnknown）。
@@ -211,6 +226,9 @@ func (p *Provider) prepareCheckout(ctx context.Context, env provider.Env, spec d
 	if checkout, err = p.acceptTerms(ctx, env, checkout); err != nil {
 		return nil, domain.Quote{}, promoUnknown, err
 	}
+	if captcha, ok := detectCaptcha(checkout.doc, checkout.resp.Body, captchaCheckout); ok {
+		p.rememberCheckoutCaptcha(captcha)
+	}
 	if checkout.doc.Find(`#frmCheckout, form[name="orderfrm"], form[action*="a=checkout"]`).Length() == 0 {
 		return nil, domain.Quote{}, promoUnknown, fmt.Errorf("checkout form not found (cart empty or product unavailable)")
 	}
@@ -226,8 +244,15 @@ func (p *Provider) emptyCart(ctx context.Context, env provider.Env) error {
 		return err
 	}
 	token := htmlutil.CSRFToken(view.doc, view.resp.Body)
-	_, err = p.post(ctx, env, "/cart.php?a=empty", url.Values{"token": {token}})
-	return err
+	// 清空后站点会重定向回购物车页，内容用不上：不跟随，省一次往返。
+	resp, err := env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodPost, URL: p.baseURL + "/cart.php?a=empty", Form: url.Values{"token": {token}}, NoRedirect: true})
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return &fetch.HTTPError{StatusCode: resp.StatusCode, URL: resp.URL}
+	}
+	return nil
 }
 
 // configureForm 商品配置表单：优先 #frmConfigureProduct；否则在 action 含 confproduct 的表单中取字段最多的。
@@ -440,7 +465,7 @@ func fillTotals(doc *goquery.Document, currency string, quote *domain.Quote) {
 }
 
 // checkoutForm 组装结算表单：已登录用户 custtype=existing，选择支付方式，同意条款，处理验证码。
-func (p *Provider) checkoutForm(ctx context.Context, env provider.Env, checkout *page, spec domain.OrderSpec) (url.Values, error) {
+func (p *Provider) checkoutForm(ctx context.Context, env provider.Env, checkout *page, spec domain.OrderSpec, pre *provider.Prefetch, purpose string) (url.Values, error) {
 	form := checkout.doc.Find(`#frmCheckout, form[name="orderfrm"], form[action*="a=checkout"]`).First()
 	values := htmlutil.FormValues(form)
 	values.Set("submit", "true")
@@ -454,7 +479,7 @@ func (p *Provider) checkoutForm(ctx context.Context, env provider.Env, checkout 
 		return nil, err
 	}
 	values.Set("paymentmethod", gateway)
-	if err := solveCaptcha(ctx, env, checkout, values, captchaCheckout, p.baseURL+"/cart.php?a=checkout", fmt.Sprintf("%s 锁单 pid=%s", env.Site.Name, spec.ProductID)); err != nil {
+	if err := solveCaptcha(ctx, env, checkout, values, captchaCheckout, p.baseURL+"/cart.php?a=checkout", purpose, pre); err != nil {
 		return nil, err
 	}
 	return values, nil

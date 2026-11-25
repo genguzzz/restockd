@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -59,6 +60,10 @@ type Provider struct {
 	groups   []string
 	currency string
 	location string
+
+	mu sync.Mutex
+	// checkoutCaptcha 最近见到的结算页验证码，锁单时据此提前求解。
+	checkoutCaptcha *pageCaptcha
 }
 
 // New 构造实例。
@@ -96,6 +101,9 @@ func (p *Provider) Catalog(ctx context.Context, env provider.Env) (domain.Catalo
 		}
 		if resp.StatusCode != http.StatusOK {
 			return domain.Catalog{}, &fetch.HTTPError{StatusCode: resp.StatusCode, URL: pageURL}
+		}
+		if captcha, _, ok := detectAddonCaptcha(resp.Body, captchaCheckout); ok {
+			p.rememberCheckoutCaptcha(captcha)
 		}
 		products, err := p.ParseGroup(resp.Body, group, pageURL)
 		if err != nil {
