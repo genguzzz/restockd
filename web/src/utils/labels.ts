@@ -43,6 +43,7 @@ export const eventMeta: Record<EventType, TagMeta> = {
   order: { label: '锁单', type: 'info' },
   challenge: { label: '人工验证', type: 'warning' },
   poll_error: { label: '轮询失败', type: 'error' },
+  poll_recovered: { label: '轮询恢复', type: 'success' },
   account: { label: '账号异常', type: 'error' },
 }
 

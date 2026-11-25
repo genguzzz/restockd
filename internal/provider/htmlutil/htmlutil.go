@@ -199,3 +199,12 @@ func Resolve(base, ref string) string {
 	}
 	return baseURL.ResolveReference(refURL).String()
 }
+
+// Title 页面 <title> 文本（解析失败或没有为空），用于错误信息。
+func Title(body []byte) string {
+	doc, err := Parse(body)
+	if err != nil {
+		return ""
+	}
+	return CleanText(doc.Find("title").First().Text())
+}

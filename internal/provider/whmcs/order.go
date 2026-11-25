@@ -110,7 +110,18 @@ func fetchPage(ctx context.Context, env provider.Env, req *fetch.Request) (*page
 	if err != nil {
 		return nil, err
 	}
+	if err := maintenanceError(htmlutil.CleanText(doc.Find("title").First().Text())); err != nil {
+		return nil, err
+	}
 	return &page{resp: resp, doc: doc}, nil
+}
+
+// maintenanceError WHMCS 停机页（标题「Down for Maintenance (Err N)」：数据库 / 授权 / 升级异常）。
+func maintenanceError(title string) error {
+	if strings.Contains(strings.ToLower(title), "down for maintenance") {
+		return fmt.Errorf("%w: %s", provider.ErrSiteMaintenance, title)
+	}
+	return nil
 }
 
 func isLoginPage(doc *goquery.Document, finalURL string) bool {

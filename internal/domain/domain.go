@@ -331,6 +331,8 @@ const (
 	EventOrder       EventType = "order"
 	EventChallenge   EventType = "challenge"
 	EventPollError   EventType = "poll_error"
+	// EventPollRecovered 之前失败的站点轮询恢复正常。
+	EventPollRecovered EventType = "poll_recovered"
 	// EventAccount 账号异常：会话失效且无法自动恢复、自动登录被拒。
 	EventAccount EventType = "account"
 )

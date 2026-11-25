@@ -105,9 +105,14 @@ func (p *Provider) Catalog(ctx context.Context, env provider.Env) (domain.Catalo
 		if captcha, _, ok := detectAddonCaptcha(resp.Body, captchaCheckout); ok {
 			p.rememberCheckoutCaptcha(captcha)
 		}
+		title := htmlutil.Title(resp.Body)
+		if err := maintenanceError(title); err != nil {
+			return domain.Catalog{}, err
+		}
 		products, err := p.ParseGroup(resp.Body, group, pageURL)
 		if err != nil {
-			return domain.Catalog{}, fmt.Errorf("group %s: %w", group, err)
+			// 带上实际落地页与标题：跳转到登录 / 首页、质询页或改版都能一眼看出。
+			return domain.Catalog{}, fmt.Errorf("group %s: %w (got %s, title %q)", group, err, resp.URL, title)
 		}
 		catalog.Products = append(catalog.Products, products...)
 	}

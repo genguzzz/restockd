@@ -83,7 +83,15 @@ func pollErrorNotice(site domain.Site, err error) (domain.Event, *notify.Message
 	if fetch.IsChallenge(err) {
 		detail += "；请在站点设置中启用 FlareSolverr，或给监控账号粘贴同一 IP/UA 获取的 cf_clearance Cookie"
 	}
+	if errors.Is(err, provider.ErrSiteMaintenance) {
+		detail += "；站点本身停机，恢复前会持续失败，无需处理"
+	}
 	return domain.Event{Type: domain.EventPollError, SiteID: site.ID, Title: site.Name + " 轮询失败", Detail: detail}, nil
+}
+
+// pollRecoveredNotice 之前失败的站点轮询恢复：只记事件。
+func pollRecoveredNotice(site domain.Site) (domain.Event, *notify.Message) {
+	return domain.Event{Type: domain.EventPollRecovered, SiteID: site.ID, Title: site.Name + " 轮询恢复", Detail: "上次错误：" + site.LastError}, nil
 }
 
 // orderNotice 锁单结果；试下单无论成败都只记事件不推送。

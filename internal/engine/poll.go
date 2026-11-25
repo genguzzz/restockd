@@ -218,6 +218,10 @@ func (e *Engine) pollSite(ctx context.Context, runner *siteRunner) (int, error) 
 		return 0, err
 	}
 	e.markPollResult(ctx, site.ID, nil)
+	if site.LastError != "" {
+		event, message := pollRecoveredNotice(site)
+		e.recordEvent(ctx, event, message)
+	}
 	e.log.Debug("polled", "site", site.ID, "products", len(catalog.Products), "elapsed", time.Since(started))
 	watches, err := e.store.ListWatches(ctx, site.ID)
 	if err != nil {
@@ -296,6 +300,10 @@ func watchIndex(watches []domain.Watch) map[string]bool {
 func (e *Engine) reportPollError(ctx context.Context, site domain.Site, err error) {
 	if errors.Is(err, provider.ErrSessionExpired) && site.MonitorAccount != "" {
 		e.markAccountStatus(ctx, site.MonitorAccount, domain.AccountExpired, err.Error())
+	}
+	// 与上次相同的错误不再记事件（站点状态里有连续失败次数），避免事件流和通知每轮刷屏。
+	if site.LastError == err.Error() {
+		return
 	}
 	event, message := pollErrorNotice(site, err)
 	e.recordEvent(ctx, event, message)

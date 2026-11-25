@@ -35,6 +35,9 @@ var ErrOutOfStock = errors.New("out of stock")
 // ErrCouponInvalid 站点明确拒绝了优惠码；为避免原价成交，锁单中止。
 var ErrCouponInvalid = errors.New("coupon rejected")
 
+// ErrSiteMaintenance 站点本身停机维护（如 WHMCS「Down for Maintenance」），只能等站点恢复。
+var ErrSiteMaintenance = errors.New("site under maintenance")
+
 // ErrNotSupported 该 Provider 不支持此能力。
 var ErrNotSupported = errors.New("not supported by provider")
 

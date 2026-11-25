@@ -471,3 +471,12 @@ func TestPlaceOrderPrefetchesKnownCaptcha(t *testing.T) {
 		t.Fatalf("result must carry step timings: %q", result.Message)
 	}
 }
+
+func TestMaintenanceError(t *testing.T) {
+	if err := maintenanceError("Down for Maintenance (Err 3)"); !errors.Is(err, provider.ErrSiteMaintenance) {
+		t.Fatalf("maintenance page not detected: %v", err)
+	}
+	if err := maintenanceError("Shopping Cart - AaITR"); err != nil {
+		t.Fatalf("normal page flagged: %v", err)
+	}
+}

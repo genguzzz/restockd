@@ -135,6 +135,8 @@ type fakeProvider struct {
 	orderErr  error
 	cancelled []string
 	cancelErr error
+	// catalogErr 非空时 Catalog 失败（模拟站点故障）。
+	catalogErr error
 }
 
 // CancelOrder 记录被取消的账单号。
@@ -164,6 +166,9 @@ func (f *fakeProvider) Meta() provider.Meta {
 func (f *fakeProvider) Catalog(context.Context, provider.Env) (domain.Catalog, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.catalogErr != nil {
+		return domain.Catalog{}, f.catalogErr
+	}
 	return domain.Catalog{Products: append([]domain.Product(nil), f.products...)}, nil
 }
 
@@ -361,5 +366,58 @@ func TestDiffIgnoresCurrencySwitch(t *testing.T) {
 	events := Diff("s", []domain.Product{priced(2236, "USD")}, []domain.Product{priced(2500, "USD")})
 	if len(events) != 1 || events[0].Type != domain.EventPriceChange {
 		t.Fatalf("same-currency change must be reported, got %+v", events)
+	}
+}
+
+func TestPollErrorRecordedOnceUntilRecovered(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	engine, err := New(Options{Store: st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Stop()
+	fakeState.set(product("1", domain.StockOut, 500))
+	defer func() {
+		fakeState.mu.Lock()
+		fakeState.catalogErr = nil
+		fakeState.mu.Unlock()
+	}()
+	site, err := engine.SaveSite(ctx, domain.Site{ID: "fe", Kind: "fake", Name: "Fake", BaseURL: "https://fake.test", Enabled: true, Config: map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setErr := func(err error) {
+		fakeState.mu.Lock()
+		fakeState.catalogErr = err
+		fakeState.mu.Unlock()
+	}
+	setErr(errors.New("down"))
+	for range 3 {
+		_, _ = engine.PollNow(ctx, site.ID)
+	}
+	setErr(errors.New("other"))
+	_, _ = engine.PollNow(ctx, site.ID)
+	setErr(nil)
+	if _, err := engine.PollNow(ctx, site.ID); err != nil {
+		t.Fatal(err)
+	}
+	events, err := st.ListEvents(ctx, site.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[domain.EventType]int{}
+	for _, event := range events {
+		counts[event.Type]++
+	}
+	if counts[domain.EventPollError] != 2 || counts[domain.EventPollRecovered] != 1 {
+		t.Fatalf("events: %v", counts)
 	}
 }

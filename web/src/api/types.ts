@@ -26,6 +26,7 @@ export type EventType =
   | 'order'
   | 'challenge'
   | 'poll_error'
+  | 'poll_recovered'
   | 'account'
 export type ChallengeKind = 'turnstile' | 'recaptcha_v2' | 'recaptcha_v3' | 'hcaptcha'
 export type FieldType = 'text' | 'list' | 'bool' | 'password'
