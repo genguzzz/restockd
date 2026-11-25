@@ -120,7 +120,7 @@ type productDTO struct {
 	Watched bool `json:"watched"`
 	// Hidden 只在 include_hidden=1 时可能为 true（默认不列出隐藏商品）。
 	Hidden bool `json:"hidden,omitempty"`
-	// LastOrder 该商品最近一单（任意状态，含试下单）；LastPlacedAt 最近成功锁单时间。
+	// LastOrder 该商品最近一单（任意状态，含试下单）；LastPlacedAt 最近成功锁单时间。都只给下单标记有效期内的。
 	LastOrder    *orderSummary `json:"last_order,omitempty"`
 	LastPlacedAt *time.Time    `json:"last_placed_at,omitempty"`
 	// StockHistory 补货概况（当前 / 上一段在售期、近 30 天补货次数）；从未在售过为空。
@@ -179,6 +179,8 @@ func (s *Server) handleListProducts(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	keyword := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	includeHidden := r.URL.Query().Get("include_hidden") == "1"
+	// 下单标记有效期外的订单不再标到商品上（也不再触发防重复确认）。
+	markSince := time.Now().Add(-s.engine.Settings().Orders.MarkTTL())
 	out := make([]productDTO, 0, len(products))
 	for _, product := range products {
 		key := store.ProductKey{SiteID: product.SiteID, ProductID: product.ID}
@@ -196,12 +198,12 @@ func (s *Server) handleListProducts(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		dto := productDTO{Product: product, Watched: watched[key], Hidden: hidden[key]}
-		if state, ok := orders[key]; ok {
+		if state, ok := orders[key]; ok && !state.Last.CreatedAt.Before(markSince) {
 			last := state.Last
 			dto.LastOrder = &orderSummary{Status: last.Status, CreatedAt: last.CreatedAt, PayURL: last.Result.PayURL, InvoiceID: last.Result.InvoiceID, Error: last.Error}
-			if !state.LastPlacedAt.IsZero() {
-				dto.LastPlacedAt = &state.LastPlacedAt
-			}
+		}
+		if state, ok := orders[key]; ok && !state.LastPlacedAt.Before(markSince) {
+			dto.LastPlacedAt = &state.LastPlacedAt
 		}
 		if history, ok := histories[key]; ok {
 			dto.StockHistory = &history

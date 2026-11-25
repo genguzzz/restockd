@@ -93,7 +93,7 @@ async function runQuote(row: Watch): Promise<void> {
   if (result) quote.value = result
 }
 
-// 立即锁单已由 ConfirmButton 确认；24 小时内重复锁单或后端 409 时再确认一次并带 force
+// 立即锁单已由 ConfirmButton 确认；有效期内重复锁单或后端 409 时再确认一次并带 force
 async function runOrder(row: Watch, dryRun: boolean): Promise<void> {
   const product = productOf(row)
   const result = await track(`${row.id}:${dryRun ? 'dry' : 'order'}`, () =>

@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	maxBackoff  = 10 * time.Minute
-	pollTimeout = 90 * time.Second
+	maxBackoff = 10 * time.Minute
+	// pollTimeout 单次轮询上限，须容得下一次 FlareSolverr 过质询（flareTimeout）再加几个页面。
+	pollTimeout = 180 * time.Second
 )
 
 // siteRunner 单站点调度协程。

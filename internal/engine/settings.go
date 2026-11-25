@@ -20,6 +20,7 @@ const SecretMask = "******"
 
 const (
 	defaultIdleInterval   = time.Hour
+	defaultOrderMarkTTL   = 12 * time.Hour
 	defaultViewerInterval = 5 * time.Minute
 	defaultManualTimeout  = 5 * time.Minute
 )
@@ -32,6 +33,7 @@ type Settings struct {
 	Solver       SolverSettings        `json:"solver"`
 	Polling      PollingSettings       `json:"polling"`
 	Egress       egress.Settings       `json:"egress"`
+	Orders       OrderSettings         `json:"orders"`
 	NotifyEvents []string              `json:"notify_events"`
 }
 
@@ -70,12 +72,27 @@ func (p PollingSettings) viewer() time.Duration {
 	return defaultViewerInterval
 }
 
+// OrderSettings 下单相关；0 表示使用默认值。
+type OrderSettings struct {
+	// MarkHours 商品上「已锁单 / 已试下单 / 上次失败」标记的有效期，同时是手动真实下单的防重复窗口。
+	MarkHours int `json:"mark_hours"`
+}
+
+// MarkTTL 下单标记有效期（默认 12 小时）。
+func (o OrderSettings) MarkTTL() time.Duration {
+	if o.MarkHours > 0 {
+		return time.Duration(o.MarkHours) * time.Hour
+	}
+	return defaultOrderMarkTTL
+}
+
 // DefaultSettings 初始设置。
 func DefaultSettings() Settings {
 	return Settings{
 		Email:        notify.EmailConfig{Port: 587, StartTLS: true},
 		Solver:       SolverSettings{FlareSolverrURL: "http://127.0.0.1:8191", ManualTimeoutSec: int(defaultManualTimeout / time.Second)},
 		Polling:      PollingSettings{IdleIntervalSec: int(defaultIdleInterval / time.Second), ViewerIntervalSec: int(defaultViewerInterval / time.Second)},
+		Orders:       OrderSettings{MarkHours: int(defaultOrderMarkTTL / time.Hour)},
 		NotifyEvents: []string{string(domain.EventRestock), string(domain.EventOrder), string(domain.EventChallenge), string(domain.EventAccount)},
 	}
 }

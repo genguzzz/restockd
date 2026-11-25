@@ -23,6 +23,8 @@ import (
 
 const (
 	httpTimeout = 30 * time.Second
+	// flareTimeout FlareSolverr 单次过质询上限：Cloudflare 托管质询经代理常要 60–80 秒（AaITR 实测 72 s）。
+	flareTimeout = 120 * time.Second
 	// eventRetention / orderRetention 定期清理的保留期。
 	eventRetention = 30 * 24 * time.Hour
 	orderRetention = 90 * 24 * time.Hour
@@ -172,7 +174,7 @@ func (e *Engine) ApplySettings(settings Settings) {
 		chain = append(chain, &solver.ExternalSolver{Endpoint: settings.Solver.ExternalURL, Token: settings.Solver.ExternalToken})
 	}
 	if settings.Solver.FlareSolverrURL != "" {
-		flare = fetch.NewFlareSolverrClient(settings.Solver.FlareSolverrURL, 60*time.Second)
+		flare = fetch.NewFlareSolverrClient(settings.Solver.FlareSolverrURL, flareTimeout)
 	}
 	chain = append(chain, e.broker)
 	e.mu.Lock()

@@ -1,4 +1,4 @@
-// 真实锁单的防重复：24 小时内已锁过单先确认再带 force 下单；后端返回 409（重复锁单）时展示已有订单并可强制重试
+// 真实锁单的防重复：下单标记有效期内已锁过单先确认再带 force 下单；后端返回 409（重复锁单）时展示已有订单并可强制重试
 import { h } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import { ApiError } from '@/api/client'
@@ -36,7 +36,7 @@ function priorLine(prior: PriorOrder) {
     : prior.invoiceId
       ? [`，账单 ${prior.invoiceId}`]
       : []
-  return h('div', ['24 小时内已对该商品锁单（', formatDateTime(prior.at), ...bill, '），确定再下一单？'])
+  return h('div', ['近期已对该商品锁单（', formatDateTime(prior.at), ...bill, '），确定再下一单？'])
 }
 
 export function useOrderPlacer() {

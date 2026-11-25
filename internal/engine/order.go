@@ -21,8 +21,6 @@ const (
 	retryCooldown = 45 * time.Second
 	maxAttempts   = 3
 	attemptDelay  = 1500 * time.Millisecond
-	// duplicateWindow 手动真实下单的防重窗口：同一站点商品 + 账号在此期间已成功锁单则拒绝（force 除外）。
-	duplicateWindow = 24 * time.Hour
 )
 
 // triggerWatches 对可下单商品的自动锁单关注异步执行锁单。
@@ -100,7 +98,7 @@ func (e *Engine) executeOrder(ctx context.Context, site domain.Site, lockKey str
 	}
 	defer lock.Unlock()
 	if dedupe && !order.Spec.DryRun {
-		existing, err := e.store.LatestPlacedOrder(ctx, site.ID, order.ProductID, order.AccountID, time.Now().Add(-duplicateWindow))
+		existing, err := e.store.LatestPlacedOrder(ctx, site.ID, order.ProductID, order.AccountID, time.Now().Add(-e.Settings().Orders.MarkTTL()))
 		if err == nil {
 			return domain.Order{}, &DuplicateOrderError{Existing: existing}
 		}

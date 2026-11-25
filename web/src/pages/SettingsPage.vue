@@ -11,6 +11,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import BarkCard from '@/components/settings/BarkCard.vue'
 import EgressCard from '@/components/settings/EgressCard.vue'
 import EmailCard from '@/components/settings/EmailCard.vue'
+import OrdersCard from '@/components/settings/OrdersCard.vue'
 import PollingCard from '@/components/settings/PollingCard.vue'
 import SolverCard from '@/components/settings/SolverCard.vue'
 import TelegramCard from '@/components/settings/TelegramCard.vue'
@@ -90,6 +91,7 @@ onMounted(() => {
         <SolverCard v-model="form.solver" />
         <EgressCard v-model="form.egress" :test="testEgress" />
         <PollingCard v-model="form.polling" />
+        <OrdersCard v-model="form.orders" />
 
         <n-card title="通知事件" size="small">
           <n-checkbox-group v-model:value="form.notify_events">

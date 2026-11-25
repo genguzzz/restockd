@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 商品详情与直接下单：选周期 / 配置 / 账号等，试下单或锁单（真实锁单前确认，24 小时内重复锁单再次确认）
+// 商品详情与直接下单：选周期 / 配置 / 账号等，试下单或锁单（真实锁单前确认，有效期内重复锁单再次确认）
 import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NDrawer, NDrawerContent, NForm, NSpace, NText, useMessage } from 'naive-ui'
 import { accountsApi, productsApi } from '@/api'

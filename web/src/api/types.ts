@@ -281,7 +281,7 @@ export interface ProductOrderInput {
   gateway?: string
   qty: number
   dry_run: boolean
-  /** 24 小时内已锁过单时需显式确认再下一单，否则后端返回 409 */
+  /** 下单标记有效期内已锁过单时需显式确认再下一单，否则后端返回 409 */
   force?: boolean
 }
 
@@ -361,6 +361,8 @@ export interface Settings {
   polling: { idle_interval_sec: number; viewer_interval_sec: number }
   /** 出口：登记的代理 + 未单独指定出口的站点使用的默认优先级（Go 可能返回 null，由 settingsApi 统一补齐） */
   egress: { proxies: EgressProxy[]; default: string[] }
+  /** 下单标记有效期（小时），同时是手动锁单的防重复窗口 */
+  orders: { mark_hours: number }
   notify_events: EventType[]
 }
 
