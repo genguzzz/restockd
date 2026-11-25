@@ -277,3 +277,34 @@ func TestRegistryRoutes(t *testing.T) {
 		t.Fatal("proxy clients must be shared per URL")
 	}
 }
+
+func TestStaleClearanceDroppedBeforeBrowser(t *testing.T) {
+	session, _ := fetch.NewSession("https://www.shop.test", nil, "")
+	// 粘贴导入的主机 Cookie 与服务端下发的父域 Cookie 都要删掉。
+	session.SetCookies([]*http.Cookie{{Name: "cf_clearance", Value: "stale"}, {Name: "sid", Value: "1"}})
+	shop, _ := url.Parse("https://www.shop.test/")
+	session.Jar().SetCookies(shop, []*http.Cookie{{Name: "cf_clearance", Value: "stale2", Domain: ".shop.test", Path: "/"}})
+	route := &stubClient{result: func(req *fetch.Request) (*fetch.Response, error) {
+		if session.Cookie("cf_clearance") != "" {
+			return &fetch.Response{StatusCode: 403}, &fetch.ChallengeError{Kind: "cloudflare", URL: req.URL}
+		}
+		return &fetch.Response{StatusCode: 200, Body: []byte("http")}, nil
+	}}
+	browser := &stubBrowser{}
+	client := &Client{SiteID: "s", Routes: []Route{{ID: "p", Client: route}}, Health: NewHealth(), Browser: browser}
+	resp, err := client.Do(context.Background(), session, &fetch.Request{URL: "https://www.shop.test/store"})
+	if err != nil || string(resp.Body) != "http" || len(browser.reqs) != 0 || route.calls != 2 {
+		t.Fatalf("stale clearance must be dropped and the request retried without the browser: %v calls=%d browser=%d", err, route.calls, len(browser.reqs))
+	}
+	if session.Cookie("sid") != "1" {
+		t.Fatal("other cookies must be kept")
+	}
+	// 没有 cf_clearance 时照常交给浏览器，不额外重试。
+	route.calls = 0
+	route.result = func(req *fetch.Request) (*fetch.Response, error) {
+		return &fetch.Response{StatusCode: 403}, &fetch.ChallengeError{Kind: "cloudflare", URL: req.URL}
+	}
+	if _, err := client.Do(context.Background(), session, &fetch.Request{URL: "https://www.shop.test/store"}); err != nil || route.calls != 1 || len(browser.reqs) != 1 {
+		t.Fatalf("challenge without clearance goes straight to the browser: %v calls=%d", err, route.calls)
+	}
+}

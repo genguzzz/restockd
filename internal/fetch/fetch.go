@@ -166,6 +166,23 @@ func (s *Session) Cookies() []*http.Cookie {
 	return s.jar.Cookies(s.baseURL)
 }
 
+// DropCookie 删除名为 name 的 Cookie（主机 Cookie 与各级父域 Cookie 都删），返回原先是否存在。
+func (s *Session) DropCookie(name string) bool {
+	if s.Cookie(name) == "" {
+		return false
+	}
+	expired := func(domain string) *http.Cookie {
+		return &http.Cookie{Name: name, Path: "/", Domain: domain, MaxAge: -1}
+	}
+	// 服务端以 Domain=.example.com 下发的与粘贴导入的（normalizeCookies 去掉了 Domain）在罐里是不同条目。
+	doomed := []*http.Cookie{expired("")}
+	for host := s.baseURL.Hostname(); strings.Contains(host, "."); host = host[strings.Index(host, ".")+1:] {
+		doomed = append(doomed, expired(host))
+	}
+	s.jar.SetCookies(s.baseURL, doomed)
+	return true
+}
+
 // Cookie 按名称取值。
 func (s *Session) Cookie(name string) string {
 	for _, cookie := range s.Cookies() {

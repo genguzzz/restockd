@@ -329,11 +329,19 @@ func (c *Client) Do(ctx context.Context, session *fetch.Session, req *fetch.Requ
 	return resp, err
 }
 
+// cfClearance Cloudflare 过质询后下发的放行 Cookie（绑定出口 IP 与 UA）。
+const cfClearance = "cf_clearance"
+
 // attempt 用一个出口发请求；遇到质询且配置了浏览器时在同一出口上过质询。
 // 浏览器能原样表达的请求（GET / 表单 POST、无自定义头）直接用浏览器的响应；其余请求先让浏览器 GET 页面
 // 拿到 cf_clearance 与 UA（写回会话），再用原客户端重发，保留 JSON 与请求头。
 func (c *Client) attempt(ctx context.Context, session *fetch.Session, req *fetch.Request, route Route) (*fetch.Response, error) {
 	resp, err := route.Client.Do(ctx, session, req)
+	if fetch.IsChallenge(err) && session != nil && session.DropCookie(cfClearance) {
+		// 失效的 cf_clearance（站点改了 Cloudflare 规则、或是另一个出口 IP 拿到的）会被直接拦截，
+		// 带着它连浏览器也过不去（FlareSolverr 会误报 IP 被封）：去掉后重试一次。
+		resp, err = route.Client.Do(ctx, session, req)
+	}
 	if c.Browser == nil || !fetch.IsChallenge(err) {
 		return resp, err
 	}
