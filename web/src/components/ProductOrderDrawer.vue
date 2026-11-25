@@ -13,6 +13,7 @@ import LastOrderTag from './LastOrderTag.vue'
 import OrderResultModal from './OrderResultModal.vue'
 import OrderSpecForm from './OrderSpecForm.vue'
 import SpecLine from './SpecLine.vue'
+import StockHistoryList from './StockHistoryList.vue'
 import StockBadge from './StockBadge.vue'
 
 const props = defineProps<{ show: boolean; product: Product | null }>()
@@ -129,6 +130,7 @@ const submit = async (dryRun: boolean) => {
       <n-form label-placement="top">
         <OrderSpecForm v-model="spec" :product="product" :accounts="accounts" account-required />
       </n-form>
+      <StockHistoryList :product="product" class="history" />
       <template #footer>
         <n-space justify="end">
           <n-button secondary type="info" :loading="isBusy('dry')" :disabled="isBusy('order')" @click="submit(true)">试下单</n-button>
@@ -143,6 +145,9 @@ const submit = async (dryRun: boolean) => {
 <style scoped>
 .head {
   margin-bottom: 16px;
+}
+.history {
+  margin-top: 8px;
 }
 .error {
   display: block;

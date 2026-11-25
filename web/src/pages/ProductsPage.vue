@@ -36,6 +36,7 @@ import RefreshIconButton from '@/components/RefreshIconButton.vue'
 import ProductOrderDrawer from '@/components/ProductOrderDrawer.vue'
 import SpecLine from '@/components/SpecLine.vue'
 import StockBadge from '@/components/StockBadge.vue'
+import StockHistoryLine from '@/components/StockHistoryLine.vue'
 import TimeAgo from '@/components/TimeAgo.vue'
 import WatchFormDrawer from '@/components/WatchFormDrawer.vue'
 
@@ -248,7 +249,16 @@ const rowProps = (row: Product) => ({ style: 'cursor: pointer', onClick: () => o
 const columns = computed<DataTableColumns<Product>>(() => [
   { title: '商品', key: 'name', minWidth: 220, render: renderName },
   { title: '站点', key: 'site_id', width: 120, render: (row) => siteNames.value[row.site_id] ?? row.site_id },
-  { title: '库存', key: 'stock', width: 100, render: (row) => h(StockBadge, { stock: row.stock }) },
+  {
+    title: '库存',
+    key: 'stock',
+    width: 170,
+    render: (row) =>
+      h('div', { style: 'display: flex; flex-direction: column; gap: 2px; align-items: flex-start' }, [
+        h(StockBadge, { stock: row.stock }),
+        h(StockHistoryLine, { history: row.stock_history }),
+      ]),
+  },
   { title: '规格', key: 'specs', minWidth: 200, render: (row) => h(SpecLine, { specs: row.specs }) },
   { title: '价格', key: 'prices', width: 170, render: renderPrices },
   {
@@ -309,6 +319,7 @@ const columns = computed<DataTableColumns<Product>>(() => [
                   <n-tag v-if="product.no_discount" size="tiny" type="warning" :bordered="false">优惠不可用</n-tag>
                 </n-space>
                 <spec-line :specs="product.specs" />
+                <StockHistoryLine :history="product.stock_history" />
                 <div class="price-list">
                   <div v-for="price in product.prices" :key="price.cycle" class="price-row">
                     <n-text depth="3"><cycle-label :cycle="price.cycle" /></n-text>

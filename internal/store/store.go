@@ -53,6 +53,8 @@ var migrations = []func(*sql.Tx) error{
 CREATE INDEX IF NOT EXISTS idx_orders_product ON orders(site_id, product_id, created_at)`)
 		return err
 	},
+	// v2 → v3：在售期表（商品补货历史），用现有补货 / 售罄事件回填。
+	migrateStockWindows,
 }
 
 // addColumn 列不存在时补列。

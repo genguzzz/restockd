@@ -105,6 +105,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/sites/{id}", s.auth(s.handleDeleteSite))
 	s.mux.HandleFunc("POST /api/sites/{id}/poll", s.auth(s.handlePollSite))
 	s.mux.HandleFunc("GET /api/sites/{id}/products", s.auth(s.handleListProducts))
+	s.mux.HandleFunc("GET /api/sites/{id}/products/{product_id}/stock-history", s.auth(s.handleStockHistory))
 	s.mux.HandleFunc("POST /api/sites/{id}/products/{product_id}/order", s.auth(s.handleOrderProduct))
 	s.mux.HandleFunc("POST /api/sites/{id}/products/{product_id}/hide", s.auth(s.handleHideProduct(true)))
 	s.mux.HandleFunc("POST /api/sites/{id}/products/{product_id}/unhide", s.auth(s.handleHideProduct(false)))

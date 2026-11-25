@@ -39,7 +39,7 @@ func Diff(siteID string, prev, next []domain.Product) []domain.Event {
 }
 
 func restockEvent(siteID string, product domain.Product) domain.Event {
-	return domain.Event{Type: domain.EventRestock, SiteID: siteID, ProductID: product.ID, Title: product.Name + " 补货" + qtySuffix(product.Stock), Detail: priceSummary(product)}
+	return domain.Event{Type: domain.EventRestock, SiteID: siteID, ProductID: product.ID, Title: product.Name + " 补货" + qtySuffix(product.Stock), Detail: product.PriceSummary()}
 }
 
 func qtySuffix(stock domain.Stock) string {
@@ -51,19 +51,6 @@ func qtySuffix(stock domain.Stock) string {
 
 func stockText(stock domain.Stock) string {
 	return string(stock.Status) + qtySuffix(stock)
-}
-
-func priceSummary(product domain.Product) string {
-	if len(product.Prices) == 0 {
-		return ""
-	}
-	price := product.Prices[0]
-	for _, candidate := range product.Prices {
-		if candidate.Cycle == domain.CycleMonthly {
-			price = candidate
-		}
-	}
-	return fmt.Sprintf("%s %s", price.Amount, price.Cycle)
 }
 
 // priceChange 同一周期、同一币种的金额变化。币种不同（如账号结算币种与匿名访问不同、商家切换显示币种）

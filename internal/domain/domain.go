@@ -124,6 +124,18 @@ func (p Product) PriceFor(cycle BillingCycle) (Price, bool) {
 	return Price{}, false
 }
 
+// PriceSummary 价格摘要（优先月付，否则第一个周期），如 "CAD 19.99 monthly"；无价格为空。
+func (p Product) PriceSummary() string {
+	if len(p.Prices) == 0 {
+		return ""
+	}
+	price, ok := p.PriceFor(CycleMonthly)
+	if !ok {
+		price = p.Prices[0]
+	}
+	return fmt.Sprintf("%s %s", price.Amount, price.Cycle)
+}
+
 // Promo 站点公开的促销信息。
 type Promo struct {
 	Code     string    `json:"code"`
@@ -345,4 +357,38 @@ func (p *Product) SortPrices() {
 		return len(cycleOrder) + 1
 	}
 	sort.SliceStable(p.Prices, func(i, j int) bool { return rank(p.Prices[i].Cycle) < rank(p.Prices[j].Cycle) })
+}
+
+// StockWindow 商品的一段在售期（补货 → 售罄），按轮询观测：
+// StartedAt 首次看到可下单，LastSeenAt 最后一次看到可下单，EndedAt 首次看到不可下单或下架（在售中为 nil）。
+// 真实起止时间与观测值相差不超过一个轮询间隔。
+type StockWindow struct {
+	ID         int64      `json:"id"`
+	SiteID     string     `json:"site_id"`
+	ProductID  string     `json:"product_id"`
+	StartedAt  time.Time  `json:"started_at"`
+	LastSeenAt time.Time  `json:"last_seen_at"`
+	EndedAt    *time.Time `json:"ended_at,omitempty"`
+	// Baseline 开始于首次抓取（或本功能上线时已在售），真实补货时间更早。
+	Baseline bool `json:"baseline,omitempty"`
+	// Qty / Price 补货时的库存数（站点披露时）与价格摘要。
+	Qty   *int   `json:"qty,omitempty"`
+	Price string `json:"price,omitempty"`
+}
+
+// Duration 在售时长：已结束按 EndedAt，在售中按 now。
+func (w StockWindow) Duration(now time.Time) time.Duration {
+	if w.EndedAt != nil {
+		return w.EndedAt.Sub(w.StartedAt)
+	}
+	return now.Sub(w.StartedAt)
+}
+
+// StockHistory 商品补货概况（商品列表用）。
+type StockHistory struct {
+	// Current 当前在售期（未在售为 nil）；Last 最近一段已结束的在售期。
+	Current *StockWindow `json:"current,omitempty"`
+	Last    *StockWindow `json:"last,omitempty"`
+	// Restocks30d 近 30 天补货次数（不含 Baseline）。
+	Restocks30d int `json:"restocks_30d"`
 }

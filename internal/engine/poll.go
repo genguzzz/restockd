@@ -230,10 +230,13 @@ func (e *Engine) pollSite(ctx context.Context, runner *siteRunner) (int, error) 
 		previous = nil
 	}
 	// Diff 用完整目录（取消隐藏时不会一次性冒出积压事件），隐藏商品的事件直接丢弃。
-	for _, change := range Diff(site.ID, previous, catalog.Products) {
+	changes := Diff(site.ID, previous, catalog.Products)
+	history := e.trackStock(ctx, site.ID, catalog.Products, changes)
+	for _, change := range changes {
 		if site.Hidden(change.ProductID) {
 			continue
 		}
+		change.Detail = withStockHistory(change, history, time.Now())
 		event, message := stockNotice(site, change, watched, byID)
 		e.recordEvent(ctx, event, message)
 	}

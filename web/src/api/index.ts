@@ -9,6 +9,7 @@ import type {
   PendingChallenge,
   Product,
   ProductOrderInput,
+  StockWindow,
   ProviderMeta,
   Quote,
   Settings,
@@ -56,6 +57,8 @@ export const productsApi = {
   list: (query: ProductQuery = {}) => http.get<Product[]>('/api/products', { ...query }),
   hide: (siteId: string, productId: string) => http.post<Site>(`${productPath(siteId, productId)}/hide`),
   unhide: (siteId: string, productId: string) => http.post<Site>(`${productPath(siteId, productId)}/unhide`),
+  stockHistory: (siteId: string, productId: string, limit = 100) =>
+    http.get<StockWindow[]>(`${productPath(siteId, productId)}/stock-history`, { limit }),
   order: (siteId: string, productId: string, input: ProductOrderInput) =>
     http.post<Order>(`${productPath(siteId, productId)}/order`, input),
 }

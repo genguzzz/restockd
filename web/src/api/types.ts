@@ -147,6 +147,30 @@ export interface Product {
   last_order?: LastOrder | null
   /** 最近一次真实锁单时间，零值表示从未（hasTime 判断） */
   last_placed_at: string
+  /** 补货概况；从未在售过为空 */
+  stock_history?: StockHistory
+}
+
+/** 一段在售期（补货 → 售罄），按轮询观测，误差约一个轮询间隔 */
+export interface StockWindow {
+  id: number
+  site_id: string
+  product_id: string
+  started_at: string
+  /** 最后一次看到可下单 */
+  last_seen_at: string
+  /** 首次看到售罄 / 下架；在售中为空 */
+  ended_at?: string
+  /** 开始于首次抓取（或上线时已在售），真实补货更早 */
+  baseline?: boolean
+  qty?: number
+  price?: string
+}
+
+export interface StockHistory {
+  current?: StockWindow
+  last?: StockWindow
+  restocks_30d: number
 }
 
 export interface LastOrder {

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,6 +123,8 @@ type productDTO struct {
 	// LastOrder 该商品最近一单（任意状态，含试下单）；LastPlacedAt 最近成功锁单时间。
 	LastOrder    *orderSummary `json:"last_order,omitempty"`
 	LastPlacedAt *time.Time    `json:"last_placed_at,omitempty"`
+	// StockHistory 补货概况（当前 / 上一段在售期、近 30 天补货次数）；从未在售过为空。
+	StockHistory *domain.StockHistory `json:"stock_history,omitempty"`
 }
 
 type orderSummary struct {
@@ -148,6 +151,11 @@ func (s *Server) handleListProducts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	orders, err := s.store.LatestOrders(r.Context(), siteID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	histories, err := s.store.StockHistories(r.Context(), siteID, time.Now())
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -195,9 +203,26 @@ func (s *Server) handleListProducts(w http.ResponseWriter, r *http.Request) {
 				dto.LastPlacedAt = &state.LastPlacedAt
 			}
 		}
+		if history, ok := histories[key]; ok {
+			dto.StockHistory = &history
+		}
 		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleStockHistory 商品的在售期列表（最新在前），?limit= 默认 100。
+func (s *Server) handleStockHistory(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	windows, err := s.store.StockWindows(r.Context(), r.PathValue("id"), r.PathValue("product_id"), limit)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if windows == nil {
+		windows = []domain.StockWindow{}
+	}
+	writeJSON(w, http.StatusOK, windows)
 }
 
 // ---- accounts ----

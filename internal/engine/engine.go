@@ -138,7 +138,7 @@ func (e *Engine) Stop() {
 	e.wg.Wait()
 }
 
-// housekeeping 定期清理过期的事件与订单记录。
+// housekeeping 定期清理过期的事件、订单与在售期记录。
 func (e *Engine) housekeeping() {
 	defer e.wg.Done()
 	ticker := time.NewTicker(6 * time.Hour)
@@ -153,6 +153,9 @@ func (e *Engine) housekeeping() {
 			}
 			if err := e.store.PruneOrders(e.rootCtx, time.Now().Add(-orderRetention)); err != nil {
 				e.log.Warn("prune orders", "err", err)
+			}
+			if err := e.store.PruneStockWindows(e.rootCtx, time.Now().Add(-stockWindowRetention)); err != nil {
+				e.log.Warn("prune stock windows", "err", err)
 			}
 		}
 	}
