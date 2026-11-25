@@ -92,7 +92,7 @@ const hiddenToggle = computed<string[]>({
   set: (value) => setQuery({ hidden: value.includes(HIDDEN) ? '1' : undefined }),
 })
 const hiddenOptions = computed<FilterOption[]>(() => [
-  { value: HIDDEN, label: '已屏蔽', count: sites.value.reduce((sum, site) => sum + (site.hidden_count ?? 0), 0) },
+  { value: HIDDEN, label: '已屏蔽', count: enabledSites.value.reduce((sum, site) => sum + (site.hidden_count ?? 0), 0) },
 ])
 const keyword = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const appliedKeyword = computed(() => (typeof route.query.q === 'string' ? route.query.q : ''))
@@ -100,8 +100,10 @@ function setQuery(patch: Record<string, string | undefined>): void {
   void router.replace({ query: { ...route.query, ...patch } })
 }
 
+// 已停用站点的商品是过期快照，后端不再返回，筛选里也不列出
+const enabledSites = computed(() => sites.value.filter((site) => site.enabled))
 const siteOptions = computed<FilterOption[]>(() =>
-  sites.value.map((site) => ({ value: site.id, label: site.name, count: `${site.in_stock_count}/${site.product_count}` })),
+  enabledSites.value.map((site) => ({ value: site.id, label: site.name, count: `${site.in_stock_count}/${site.product_count}` })),
 )
 const stockOptions: FilterOption[] = (Object.keys(stockMeta) as StockStatus[]).map((key) => ({ value: key, label: stockMeta[key].label }))
 const hasFilter = computed(() => siteFilter.value.length > 0 || stockFilter.value.length > 0 || Boolean(appliedKeyword.value) || hiddenOnly.value)

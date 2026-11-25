@@ -251,17 +251,22 @@ func TestHideProducts(t *testing.T) {
 	}
 	// 普通 PUT 站点不会清掉隐藏列表。
 	server.do(http.MethodPut, "/api/sites/"+siteID, `{"kind":"usvps24","name":"renamed","base_url":"https://usvps24.com","config":{},"enabled":false}`)
-	for _, path := range []string{"/api/products", "/api/sites/" + siteID + "/products"} {
+	// 站点是停用的（测试里不真的去轮询）：按站点查询仍返回其商品。
+	for _, path := range []string{"/api/products?site_id=" + siteID, "/api/sites/" + siteID + "/products"} {
 		if _, _, list := server.do(http.MethodGet, path, ""); len(list) != 1 || list[0].(map[string]any)["id"] != "2" {
 			t.Fatalf("%s must exclude hidden products: %v", path, list)
 		}
 	}
-	_, _, all := server.do(http.MethodGet, "/api/products?include_hidden=1", "")
+	_, _, all := server.do(http.MethodGet, "/api/products?include_hidden=1&site_id="+siteID, "")
 	if len(all) != 2 || all[0].(map[string]any)["hidden"] != true || all[1].(map[string]any)["hidden"] != nil {
 		t.Fatalf("include_hidden must list and flag hidden products: %v", all)
 	}
-	if _, stats, _ := server.do(http.MethodGet, "/api/stats", ""); stats["products"] != 1.0 {
-		t.Fatalf("stats must exclude hidden products: %v", stats)
+	// 不按站点查询时，已停用站点的商品既不列出也不计入统计。
+	if _, _, list := server.do(http.MethodGet, "/api/products", ""); len(list) != 0 {
+		t.Fatalf("products of disabled sites must not be listed: %v", list)
+	}
+	if _, stats, _ := server.do(http.MethodGet, "/api/stats", ""); stats["products"] != 0.0 {
+		t.Fatalf("stats must exclude disabled sites: %v", stats)
 	}
 	_, shown, _ := server.do(http.MethodPost, "/api/sites/"+siteID+"/products/1/unhide", "")
 	if shown["product_count"] != 2.0 || shown["hidden_count"] != 0.0 || shown["hidden_products"] != nil {

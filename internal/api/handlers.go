@@ -158,10 +158,12 @@ func (s *Server) handleListProducts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	watched, hidden := map[store.ProductKey]bool{}, map[store.ProductKey]bool{}
+	disabled := map[string]bool{}
 	for _, watch := range watches {
 		watched[store.ProductKey{SiteID: watch.SiteID, ProductID: watch.ProductID}] = true
 	}
 	for _, site := range sites {
+		disabled[site.ID] = !site.Enabled
 		for _, id := range site.HiddenProducts {
 			hidden[store.ProductKey{SiteID: site.ID, ProductID: id}] = true
 		}
@@ -173,6 +175,10 @@ func (s *Server) handleListProducts(w http.ResponseWriter, r *http.Request) {
 	for _, product := range products {
 		key := store.ProductKey{SiteID: product.SiteID, ProductID: product.ID}
 		if hidden[key] && !includeHidden {
+			continue
+		}
+		// 已停用站点的商品是过期快照：不按站点查询时不展示。
+		if disabled[product.SiteID] && siteID == "" {
 			continue
 		}
 		if status != "" && string(product.Stock.Status) != status {
@@ -546,8 +552,11 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	since := time.Now().Add(-24 * time.Hour)
 	sites, _ := s.store.ListSites(ctx)
-	products, inStock := 0, 0 // 不含隐藏商品
+	products, inStock := 0, 0 // 不含隐藏商品与已停用站点
 	for _, site := range sites {
+		if !site.Enabled {
+			continue // 已停用站点的商品不计入
+		}
 		counts, _ := s.store.CountProducts(ctx, site.ID, site.HiddenProducts)
 		products += counts.Visible
 		inStock += counts.InStock
