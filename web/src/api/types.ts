@@ -187,6 +187,8 @@ export interface OrderDefaults {
   os?: string
   hostname?: string
   ssh_key?: string
+  /** 默认优惠码：关注规则 / 手动下单未填写时使用 */
+  coupon?: string
 }
 
 export interface Account {
@@ -326,6 +328,8 @@ export interface Challenge {
   site_key?: string
   page_url: string
   action?: string
+  /** 隐形 reCAPTCHA v2：页面无勾选框 */
+  invisible?: boolean
   site_id: string
   account_id?: string
   purpose: string

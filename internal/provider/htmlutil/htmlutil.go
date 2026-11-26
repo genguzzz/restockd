@@ -164,15 +164,17 @@ func DetectCaptcha(doc *goquery.Document) (solver.Kind, string, bool) {
 		return solver.KindHCaptcha, node.AttrOr("data-sitekey", ""), true
 	}
 	if node := doc.Find(".g-recaptcha[data-sitekey]").First(); node.Length() > 0 {
-		if node.AttrOr("data-size", "") == "invisible" {
-			return solver.KindRecaptchaV3, node.AttrOr("data-sitekey", ""), true
-		}
 		return solver.KindRecaptchaV2, node.AttrOr("data-sitekey", ""), true
 	}
 	if node := doc.Find("[data-sitekey]").First(); node.Length() > 0 {
 		return solver.KindRecaptchaV2, node.AttrOr("data-sitekey", ""), true
 	}
 	return "", "", false
+}
+
+// InvisibleRecaptcha 页面是否为隐形 reCAPTCHA v2：控件 data-size="invisible"，或 WHMCS 的 btn-recaptcha-invisible 提交按钮。
+func InvisibleRecaptcha(doc *goquery.Document) bool {
+	return doc.Find(`.g-recaptcha[data-size="invisible"], .btn-recaptcha-invisible`).Length() > 0
 }
 
 // CaptchaField 各验证码提交时的表单字段名。

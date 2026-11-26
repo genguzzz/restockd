@@ -147,3 +147,27 @@ func TestExternalSolverContract(t *testing.T) {
 		t.Fatal("want auth error")
 	}
 }
+
+// 隐形 reCAPTCHA v2 要带 invisible:true；其余类型不带该字段。
+func TestExternalSolverSendsInvisible(t *testing.T) {
+	var got []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got = append(got, body)
+		_, _ = w.Write([]byte(`{"token":"T"}`))
+	}))
+	defer server.Close()
+	ext := &ExternalSolver{Endpoint: server.URL}
+	for _, challenge := range []Challenge{{Kind: KindRecaptchaV2, SiteKey: "k", Invisible: true}, {Kind: KindTurnstile, SiteKey: "k"}} {
+		if _, err := ext.Solve(context.Background(), challenge); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(got) != 2 || got[0]["invisible"] != true {
+		t.Fatalf("invisible recaptcha must send invisible=true: %+v", got)
+	}
+	if _, present := got[1]["invisible"]; present {
+		t.Fatalf("non-invisible challenge must omit invisible: %+v", got[1])
+	}
+}

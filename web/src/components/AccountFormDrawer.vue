@@ -48,6 +48,7 @@ function fromAccount(account: Account | null): AccountForm {
       os: account?.defaults?.os ?? '',
       hostname: account?.defaults?.hostname ?? '',
       ssh_key: account?.defaults?.ssh_key ?? '',
+      coupon: account?.defaults?.coupon ?? '',
     },
     cookies_raw: '',
     username: account?.username ?? '',
@@ -129,9 +130,14 @@ const submit = async () => {
             <n-input v-model:value="form.defaults.os" placeholder="例如 debian-12" />
           </n-form-item>
         </div>
-        <n-form-item label="主机名">
-          <n-input v-model:value="form.defaults.hostname" placeholder="可选" />
-        </n-form-item>
+        <div class="row-2">
+          <n-form-item label="主机名">
+            <n-input v-model:value="form.defaults.hostname" placeholder="可选" />
+          </n-form-item>
+          <n-form-item label="默认优惠码">
+            <n-input v-model:value="form.defaults.coupon" placeholder="下单未填写时自动使用" />
+          </n-form-item>
+        </div>
         <n-form-item label="SSH 公钥">
           <n-input v-model:value="form.defaults.ssh_key" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" placeholder="ssh-ed25519 AAAA..." />
         </n-form-item>

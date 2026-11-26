@@ -29,10 +29,12 @@ var ErrUnsupported = errors.New("solver: kind not supported")
 
 // Challenge 一次待求解的验证。
 type Challenge struct {
-	Kind      Kind   `json:"kind"`
-	SiteKey   string `json:"site_key,omitempty"`
-	PageURL   string `json:"page_url"`
-	Action    string `json:"action,omitempty"`
+	Kind    Kind   `json:"kind"`
+	SiteKey string `json:"site_key,omitempty"`
+	PageURL string `json:"page_url"`
+	Action  string `json:"action,omitempty"`
+	// Invisible 隐形 reCAPTCHA v2（无勾选框，提交时 grecaptcha.execute）：打码服务需按 invisible 求解，否则 token 会被站点拒绝。
+	Invisible bool   `json:"invisible,omitempty"`
 	SiteID    string `json:"site_id"`
 	AccountID string `json:"account_id,omitempty"`
 	// Purpose 给人看的用途说明，如"usvps24 下单 pinnacle-network-2"。

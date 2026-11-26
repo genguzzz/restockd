@@ -16,7 +16,7 @@ import (
 // ExternalSolver 调用用户自配的 HTTP 求解服务。约定：
 //
 //	POST <endpoint>  Authorization: Bearer <token>
-//	请求 {"kind":"turnstile","site_key":"...","page_url":"...","action":"..."}
+//	请求 {"kind":"turnstile","site_key":"...","page_url":"...","action":"..."}，隐形 reCAPTCHA v2 另带 "invisible":true
 //	响应 {"token":"...","cookies":"a=1; b=2","user_agent":"..."}，失败时 {"error":"..."}
 //
 // 用户可以把它接到自己的服务上（自建浏览器农场、第三方打码平台的转换层等），本程序不内置任何打码实现。
@@ -44,7 +44,11 @@ type externalResponse struct {
 
 // Solve 实现 Solver。
 func (s *ExternalSolver) Solve(ctx context.Context, challenge Challenge) (Solution, error) {
-	raw, err := json.Marshal(map[string]string{"kind": string(challenge.Kind), "site_key": challenge.SiteKey, "page_url": challenge.PageURL, "action": challenge.Action})
+	payload := map[string]any{"kind": string(challenge.Kind), "site_key": challenge.SiteKey, "page_url": challenge.PageURL, "action": challenge.Action}
+	if challenge.Invisible {
+		payload["invisible"] = true
+	}
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		return Solution{}, err
 	}

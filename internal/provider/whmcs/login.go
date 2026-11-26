@@ -1,6 +1,7 @@
 package whmcs
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -54,7 +55,8 @@ func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Cre
 	if captcha, _, ok := detectAddonCaptcha(loginPage.resp.Body, captchaCheckout); ok {
 		p.rememberCheckoutCaptcha(captcha)
 	}
-	if err := solveCaptcha(ctx, env, loginPage, values, captchaLogin, formURL, env.Site.Name+" 登录", nil); err != nil {
+	solvedBy, err := solveCaptcha(ctx, env, loginPage, values, captchaLogin, formURL, env.Site.Name+" 登录", nil)
+	if err != nil {
 		return provider.SessionInfo{}, err
 	}
 	action := htmlutil.Resolve(formURL, form.AttrOr("action", formURL))
@@ -70,7 +72,7 @@ func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Cre
 		}
 		if captchaMessagePattern.MatchString(message) {
 			// 验证码没通过不代表密码错：不能按 ErrLoginFailed 处理（那会标记凭据被拒、停掉自动登录）。
-			return provider.SessionInfo{}, fmt.Errorf("login captcha not accepted: %s", message)
+			return provider.SessionInfo{}, fmt.Errorf("login captcha not accepted (solved by %s): %s", cmp.Or(solvedBy, "none"), message)
 		}
 		return provider.SessionInfo{}, fmt.Errorf("%w: %s", provider.ErrLoginFailed, message)
 	}

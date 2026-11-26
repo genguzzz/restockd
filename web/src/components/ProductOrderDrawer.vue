@@ -48,7 +48,7 @@ watch(
   },
 )
 
-// 选账号时用其默认下单参数预填空着的 OS / 主机名 / 支付方式
+// 选账号时用其默认下单参数预填空着的 OS / 主机名 / 支付方式 / 优惠码
 watch(
   () => spec.value.accountId,
   (accountId) => {
@@ -59,6 +59,7 @@ watch(
     if (!current.os && defaults.os && osValid) current.os = defaults.os
     if (!current.hostname && defaults.hostname) current.hostname = defaults.hostname
     if (!current.gateway && defaults.gateway) current.gateway = defaults.gateway
+    if (!current.coupon && defaults.coupon) current.coupon = defaults.coupon
   },
 )
 

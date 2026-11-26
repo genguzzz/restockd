@@ -490,7 +490,7 @@ func (p *Provider) checkoutForm(ctx context.Context, env provider.Env, checkout 
 		return nil, err
 	}
 	values.Set("paymentmethod", gateway)
-	if err := solveCaptcha(ctx, env, checkout, values, captchaCheckout, p.baseURL+"/cart.php?a=checkout", purpose, pre); err != nil {
+	if _, err := solveCaptcha(ctx, env, checkout, values, captchaCheckout, p.baseURL+"/cart.php?a=checkout", purpose, pre); err != nil {
 		return nil, err
 	}
 	return values, nil

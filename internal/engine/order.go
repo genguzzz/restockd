@@ -71,12 +71,13 @@ func watchSpec(watch domain.Watch, dryRun bool) domain.OrderSpec {
 	return domain.OrderSpec{ProductID: watch.ProductID, Cycle: watch.Cycle, Options: watch.Options, OS: watch.OS, Hostname: watch.Hostname, Coupon: watch.Coupon, Gateway: watch.Gateway, Qty: max(watch.Qty, 1), DryRun: dryRun}
 }
 
-// withAccountDefaults 未填写的系统 / 主机名 / SSH 公钥 / 支付方式回落到账号默认值。
+// withAccountDefaults 未填写的系统 / 主机名 / SSH 公钥 / 支付方式 / 优惠码回落到账号默认值。
 func withAccountDefaults(spec domain.OrderSpec, account domain.Account) domain.OrderSpec {
 	spec.OS = cmp.Or(spec.OS, account.Defaults.OS)
 	spec.Hostname = cmp.Or(spec.Hostname, account.Defaults.Hostname)
 	spec.SSHKey = cmp.Or(spec.SSHKey, account.Defaults.SSHKey)
 	spec.Gateway = cmp.Or(spec.Gateway, account.Defaults.Gateway)
+	spec.Coupon = cmp.Or(spec.Coupon, account.Defaults.Coupon)
 	return spec
 }
 

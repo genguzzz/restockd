@@ -121,6 +121,10 @@ func TestDetectNativeRecaptcha(t *testing.T) {
 	if !ok || captcha.kind != solver.KindRecaptchaV2 || captcha.siteKey != "6LdLT5UqAAAAAGOMrS3BdN1ryxq-BO9uo74QKIT4" || captcha.field != "g-recaptcha-response" {
 		t.Fatalf("native recaptcha: %v %+v", ok, captcha)
 	}
+	// btn-recaptcha-invisible：隐形 v2，必须告诉 Solver 按 invisible 求解（否则 token 被拒：Captcha verification incorrect）。
+	if challenge := captcha.challenge("https://example.com/login", "login"); !challenge.Invisible || challenge.Kind != solver.KindRecaptchaV2 {
+		t.Fatalf("SixtyNet login is invisible reCAPTCHA v2: %+v", challenge)
+	}
 	// 同一份全站配置，但页面没有带 btn-recaptcha 的按钮：这个表单不要求验证码。
 	plain := []byte(strings.ReplaceAll(string(body), "btn-recaptcha", "btn-plain"))
 	doc, _ = htmlutil.Parse(plain)

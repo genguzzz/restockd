@@ -45,6 +45,9 @@ const kindHelp: Record<ChallengeKind, string> = {
   hcaptcha: '在目标站点页面完成验证后，从开发者工具复制 h-captcha-response 的值。',
 }
 
+// 隐形 reCAPTCHA v2 没有勾选框：在目标页控制台执行后复制返回的 token（2 分钟内有效）。
+const invisibleHelp = '隐形 reCAPTCHA：在目标页面开发者工具控制台执行 await grecaptcha.execute()（或点提交按钮后读 g-recaptcha-response），2 分钟内粘贴 token。'
+
 const message = useMessage()
 const act = useAction()
 const { isBusy, track } = useBusy()
@@ -197,7 +200,7 @@ onMounted(() => {
               <span>{{ formatDateTime(pending.created_at) }} → {{ formatDateTime(pending.expires_at) }}</span>
             </div>
           </div>
-          <n-text depth="3" class="help">{{ kindHelp[pending.challenge.kind] }}</n-text>
+          <n-text depth="3" class="help">{{ pending.challenge.invisible ? invisibleHelp : kindHelp[pending.challenge.kind] }}</n-text>
           <n-form label-placement="top" size="small" class="solve-form">
             <n-form-item label="Token">
               <n-input v-model:value="formOf(pending.id).token" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" placeholder="粘贴验证 token" />

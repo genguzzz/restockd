@@ -53,7 +53,7 @@ const defaultHint = (value: string | undefined, fallback: string) => (value ? `�
     <n-input v-model:value="model.hostname" :placeholder="defaultHint(account?.defaults.hostname, '可选')" />
   </n-form-item>
   <n-form-item label="优惠码">
-    <n-input v-model:value="model.coupon" placeholder="可选" />
+    <n-input v-model:value="model.coupon" :placeholder="defaultHint(account?.defaults.coupon, '可选')" />
   </n-form-item>
   <n-form-item label="支付方式">
     <n-input v-model:value="model.gateway" :placeholder="defaultHint(account?.defaults.gateway, '支付方式，如 alipay')" />

@@ -124,6 +124,15 @@ func TestBuildSpecFallsBackToAccountDefaults(t *testing.T) {
 	if spec.Gateway != "stripe" || spec.OS != "ubuntu" {
 		t.Fatalf("watch values must win: %+v", spec)
 	}
+	// 关注规则没填优惠码：用账号默认优惠码；填了则以关注规则为准。
+	account.Defaults.Coupon = "MEV0N6E1LU"
+	if spec = withAccountDefaults(watchSpec(watch, false), account); spec.Coupon != "C" {
+		t.Fatalf("watch coupon must win: %+v", spec)
+	}
+	watch.Coupon = ""
+	if spec = withAccountDefaults(watchSpec(watch, false), account); spec.Coupon != "MEV0N6E1LU" {
+		t.Fatalf("empty coupon must fall back to account default: %+v", spec)
+	}
 }
 
 // ---- 端到端：假 Provider ----

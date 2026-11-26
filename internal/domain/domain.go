@@ -231,6 +231,8 @@ type OrderDefaults struct {
 	OS       string `json:"os,omitempty"`
 	Hostname string `json:"hostname,omitempty"`
 	SSHKey   string `json:"ssh_key,omitempty"`
+	// Coupon 默认优惠码：关注规则 / 手动下单未填写时自动使用。
+	Coupon string `json:"coupon,omitempty"`
 }
 
 // Watch 关注规则：关注某站点某商品，可选择有货时自动锁单。

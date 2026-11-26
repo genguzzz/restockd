@@ -25,7 +25,7 @@ const setTimeoutSec = (value: number | null) => {
       </n-form-item>
       <n-alert type="default" :show-icon="false" class="card-note">
         外部服务约定：<code>POST &lt;URL&gt;</code>，请求
-        <code>{"kind","site_key","page_url","action"}</code>，返回
+        <code>{"kind","site_key","page_url","action"}</code>（隐形 reCAPTCHA v2 另带 <code>"invisible":true</code>），返回
         <code>{"token","cookies","user_agent"}</code>，失败返回 <code>{"error"}</code>。用于 Turnstile / reCAPTCHA / hCaptcha 等 token 类验证。
       </n-alert>
       <n-form-item label="人工验证超时" feedback="自动求解失败后在「人工验证」等待的时长">

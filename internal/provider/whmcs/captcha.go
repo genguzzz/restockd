@@ -22,13 +22,14 @@ const (
 	captchaLogin    = "login"
 )
 
-// pageCaptcha 页面要求的验证码：类型、sitekey、Turnstile action，以及 token 与附加字段的表单名。
+// pageCaptcha 页面要求的验证码：类型、sitekey、Turnstile action、是否隐形 reCAPTCHA，以及 token 与附加字段的表单名。
 type pageCaptcha struct {
-	kind    solver.Kind
-	siteKey string
-	action  string
-	field   string
-	extra   url.Values
+	kind      solver.Kind
+	siteKey   string
+	invisible bool
+	action    string
+	field     string
+	extra     url.Values
 }
 
 // captchaAddonConfig JS 注入式验证码插件的配置（如 WHMCS 的 megabre_turnstile：window.novixCaptcha = {...}），
@@ -49,7 +50,7 @@ func detectCaptcha(doc *goquery.Document, body []byte, context string) (pageCapt
 		return captcha, ok
 	}
 	if kind, siteKey, found := htmlutil.DetectCaptcha(doc); found {
-		return pageCaptcha{kind: kind, siteKey: siteKey, field: htmlutil.CaptchaField(kind)}, true
+		return pageCaptcha{kind: kind, siteKey: siteKey, invisible: kind == solver.KindRecaptchaV2 && htmlutil.InvisibleRecaptcha(doc), field: htmlutil.CaptchaField(kind)}, true
 	}
 	return nativeCaptcha(doc, body)
 }
@@ -78,7 +79,7 @@ func nativeCaptcha(doc *goquery.Document, body []byte) (pageCaptcha, bool) {
 	if config.APIObject == "hcaptcha" {
 		kind = solver.KindHCaptcha
 	}
-	return pageCaptcha{kind: kind, siteKey: config.SiteKey, field: htmlutil.CaptchaField(kind)}, true
+	return pageCaptcha{kind: kind, siteKey: config.SiteKey, invisible: kind == solver.KindRecaptchaV2 && htmlutil.InvisibleRecaptcha(doc), field: htmlutil.CaptchaField(kind)}, true
 }
 
 // detectAddonCaptcha 只看 JS 注入的插件配置（全站页面都带，商品页也能读到）。configured 表示页面有插件配置；
@@ -118,23 +119,23 @@ func (p *Provider) knownCheckoutCaptcha() (pageCaptcha, bool) {
 }
 
 func (c pageCaptcha) challenge(pageURL, purpose string) solver.Challenge {
-	return solver.Challenge{Kind: c.kind, SiteKey: c.siteKey, Action: c.action, PageURL: pageURL, Purpose: purpose}
+	return solver.Challenge{Kind: c.kind, SiteKey: c.siteKey, Action: c.action, Invisible: c.invisible, PageURL: pageURL, Purpose: purpose}
 }
 
-// solveCaptcha 页面带验证码时交给 Solver（有匹配的预取结果则直接用），把 token 与附加字段写入表单；
-// 没有验证码直接返回。
-func solveCaptcha(ctx context.Context, env provider.Env, page *page, values url.Values, context, pageURL, purpose string, pre *provider.Prefetch) error {
+// solveCaptcha 页面带验证码时交给 Solver（有匹配的预取结果则直接用），把 token 与附加字段写入表单，
+// 返回求解者名称（供站点拒绝 token 时定位）；没有验证码直接返回空串。
+func solveCaptcha(ctx context.Context, env provider.Env, page *page, values url.Values, context, pageURL, purpose string, pre *provider.Prefetch) (string, error) {
 	captcha, found := detectCaptcha(page.doc, page.resp.Body, context)
 	if !found {
-		return nil
+		return "", nil
 	}
 	solution, err := pre.Solve(ctx, env, captcha.challenge(pageURL, purpose))
 	if err != nil {
-		return err
+		return "", err
 	}
 	values.Set(captcha.field, solution.Token)
 	for key := range captcha.extra {
 		values.Set(key, captcha.extra.Get(key))
 	}
-	return nil
+	return solution.SolvedBy, nil
 }
