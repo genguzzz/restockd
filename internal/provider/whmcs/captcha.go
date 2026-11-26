@@ -48,11 +48,37 @@ func detectCaptcha(doc *goquery.Document, body []byte, context string) (pageCapt
 	if captcha, configured, ok := detectAddonCaptcha(body, context); configured {
 		return captcha, ok
 	}
-	kind, siteKey, found := htmlutil.DetectCaptcha(doc)
-	if !found {
+	if kind, siteKey, found := htmlutil.DetectCaptcha(doc); found {
+		return pageCaptcha{kind: kind, siteKey: siteKey, field: htmlutil.CaptchaField(kind)}, true
+	}
+	return nativeCaptcha(doc, body)
+}
+
+// nativeRecaptchaPattern WHMCS 自带验证码的全站配置：var recaptcha = {"siteKey":"...","apiObject":"grecaptcha",...}。
+var nativeRecaptchaPattern = regexp.MustCompile(`var\s+recaptcha\s*=\s*\{`)
+
+// nativeCaptcha WHMCS 自带的（隐形）reCAPTCHA / hCaptcha：页面上没有 data-sitekey 控件，sitekey 在全站配置里；
+// 只有当前页的提交按钮带 btn-recaptcha 时这个表单才要求验证码。
+func nativeCaptcha(doc *goquery.Document, body []byte) (pageCaptcha, bool) {
+	if doc.Find(".btn-recaptcha").Length() == 0 {
 		return pageCaptcha{}, false
 	}
-	return pageCaptcha{kind: kind, siteKey: siteKey, field: htmlutil.CaptchaField(kind)}, true
+	loc := nativeRecaptchaPattern.FindIndex(body)
+	if loc == nil {
+		return pageCaptcha{}, false
+	}
+	var config struct {
+		SiteKey   string `json:"siteKey"`
+		APIObject string `json:"apiObject"`
+	}
+	if json.NewDecoder(bytes.NewReader(body[loc[1]-1:])).Decode(&config) != nil || config.SiteKey == "" {
+		return pageCaptcha{}, false
+	}
+	kind := solver.KindRecaptchaV2
+	if config.APIObject == "hcaptcha" {
+		kind = solver.KindHCaptcha
+	}
+	return pageCaptcha{kind: kind, siteKey: config.SiteKey, field: htmlutil.CaptchaField(kind)}, true
 }
 
 // detectAddonCaptcha 只看 JS 注入的插件配置（全站页面都带，商品页也能读到）。configured 表示页面有插件配置；

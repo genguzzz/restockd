@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/genguzzz/restockd/internal/domain"
 	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/provider"
+	"github.com/genguzzz/restockd/internal/provider/htmlutil"
+	"github.com/genguzzz/restockd/internal/solver"
 )
 
 // fakeLoginSite 最小 WHMCS 登录流程：/login 表单（带 token），正确密码种 WHMCSsession 并跳客户中心。
@@ -104,5 +107,38 @@ func TestLoginTwoFactorUnsupported(t *testing.T) {
 	_, err := p.Login(context.Background(), env, domain.Credentials{Username: "me@example.com", Password: "right"})
 	if !errors.Is(err, provider.ErrLoginFailed) || !strings.Contains(err.Error(), "two-factor") {
 		t.Fatalf("want two-factor error, got %v", err)
+	}
+}
+
+// SixtyNet 登录页：WHMCS 自带隐形 reCAPTCHA（var recaptcha 全站配置 + btn-recaptcha 按钮），没有 data-sitekey。
+func TestDetectNativeRecaptcha(t *testing.T) {
+	body, err := os.ReadFile("../../../testdata/whmcs/sixtynet_login.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := htmlutil.Parse(body)
+	captcha, ok := detectCaptcha(doc, body, captchaLogin)
+	if !ok || captcha.kind != solver.KindRecaptchaV2 || captcha.siteKey != "6LdLT5UqAAAAAGOMrS3BdN1ryxq-BO9uo74QKIT4" || captcha.field != "g-recaptcha-response" {
+		t.Fatalf("native recaptcha: %v %+v", ok, captcha)
+	}
+	// 同一份全站配置，但页面没有带 btn-recaptcha 的按钮：这个表单不要求验证码。
+	plain := []byte(strings.ReplaceAll(string(body), "btn-recaptcha", "btn-plain"))
+	doc, _ = htmlutil.Parse(plain)
+	if _, ok := detectCaptcha(doc, plain, captchaLogin); ok {
+		t.Fatal("config without a captcha button must not require a captcha")
+	}
+}
+
+// 站点回「请完成验证码」：不是密码错误，不能返回 ErrLoginFailed（否则账号被标记凭据被拒）。
+func TestLoginCaptchaRejectionIsNotCredentialFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `<html><body><div class="alert alert-danger">Complete the captcha and try again.</div>
+<form method="post" action="/login"><input type="hidden" name="token" value="t"/><input name="username"/><input type="password" name="password"/></form></body></html>`)
+	}))
+	defer server.Close()
+	p, env := newLoginEnv(t, server)
+	_, err := p.Login(context.Background(), env, domain.Credentials{Username: "me@example.com", Password: "right"})
+	if err == nil || errors.Is(err, provider.ErrLoginFailed) || !strings.Contains(err.Error(), "captcha") {
+		t.Fatalf("captcha rejection must not be a credential failure: %v", err)
 	}
 }

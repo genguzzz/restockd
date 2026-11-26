@@ -20,6 +20,9 @@ var _ provider.Authenticator = (*Provider)(nil)
 // loginPaths WHMCS 8（/login 与 rp 路由）与旧版（clientarea.php 内嵌表单）的登录入口，依次尝试。
 var loginPaths = []string{"/login", "/index.php?rp=/login", "/clientarea.php"}
 
+// captchaMessagePattern 登录页的验证码报错（如 WHMCS「Complete the captcha and try again.」）。
+var captchaMessagePattern = regexp.MustCompile(`(?i)captcha|验证码|人机验证`)
+
 // twoFactorPattern 登录后要求二次验证（暂不支持自动完成）。
 var twoFactorPattern = regexp.MustCompile(`(?i)two[- ]factor|2fa|二次验证|双重验证|两步验证`)
 
@@ -64,6 +67,10 @@ func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Cre
 		message := errorMessage(result)
 		if message == "" {
 			message = "still on login page"
+		}
+		if captchaMessagePattern.MatchString(message) {
+			// 验证码没通过不代表密码错：不能按 ErrLoginFailed 处理（那会标记凭据被拒、停掉自动登录）。
+			return provider.SessionInfo{}, fmt.Errorf("login captcha not accepted: %s", message)
 		}
 		return provider.SessionInfo{}, fmt.Errorf("%w: %s", provider.ErrLoginFailed, message)
 	}

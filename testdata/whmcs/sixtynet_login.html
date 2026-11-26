@@ -1,0 +1,602 @@
+    <!DOCTYPE html>
+    <html lang="en" >
+    <head>
+        <meta charset="utf-8" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+            <title>
+                    Login
+         - SixtyNet
+    </title>
+            <link rel="canonical" href="https://sixtynet.net/index.php?rp=/login">
+                            <link rel="shortcut icon" href="/templates/lagom2/assets/img/favicons/favicon.ico">
+        <link rel="icon" sizes="16x16 32x32 64x64" href="/templates/lagom2/assets/img/favicons/favicon.ico">
+        <link rel="icon" type="image/png" sizes="196x196" href="/templates/lagom2/assets/img/favicons/favicon-192.png">
+        <link rel="icon" type="image/png" sizes="160x160" href="/templates/lagom2/assets/img/favicons/favicon-160.png">
+        <link rel="icon" type="image/png" sizes="96x96" href="/templates/lagom2/assets/img/favicons/favicon-96.png">
+        <link rel="icon" type="image/png" sizes="64x64" href="/templates/lagom2/assets/img/favicons/favicon-64.png">
+        <link rel="icon" type="image/png" sizes="32x32" href="/templates/lagom2/assets/img/favicons/favicon-32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="/templates/lagom2/assets/img/favicons/favicon-16.png">
+        <link rel="apple-touch-icon" href="/templates/lagom2/assets/img/favicons/favicon-57.png">
+        <link rel="apple-touch-icon" sizes="114x114" href="/templates/lagom2/assets/img/favicons/favicon-114.png">
+        <link rel="apple-touch-icon" sizes="72x72" href="/templates/lagom2/assets/img/favicons/favicon-72.png">
+        <link rel="apple-touch-icon" sizes="144x144" href="/templates/lagom2/assets/img/favicons/favicon-144.png">
+        <link rel="apple-touch-icon" sizes="60x60" href="/templates/lagom2/assets/img/favicons/favicon-60.png">
+        <link rel="apple-touch-icon" sizes="120x120" href="/templates/lagom2/assets/img/favicons/favicon-120.png">
+        <link rel="apple-touch-icon" sizes="76x76" href="/templates/lagom2/assets/img/favicons/favicon-76.png">
+        <link rel="apple-touch-icon" sizes="152x152" href="/templates/lagom2/assets/img/favicons/favicon-152.png">
+        <link rel="apple-touch-icon" sizes="180x180" href="/templates/lagom2/assets/img/favicons/favicon-180.png">
+        <meta name="msapplication-TileColor" content="#FFFFFF">
+        <meta name="msapplication-TileImage" content="/templates/lagom2/assets/img/favicons/favicon-144.png">
+        <meta name="msapplication-config" content="/templates/lagom2/assets/img/favicons/browserconfig.xml">
+    
+                <link rel='stylesheet' href='/templates/lagom2/core/styles/depth/assets/css/vars/minified.css?1733736312'>
+        
+                <link rel="stylesheet" href="/templates/lagom2/assets/css/theme.css?v=2.2.8">
+                        
+        
+        
+        
+        <!-- HTML5 Shim and Respond.js IE8 support of HTML5 elements and media queries -->
+    <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+    <!--[if lt IE 9]>
+    <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+    <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
+    <![endif]-->
+
+        <script>
+        var csrfToken = '0000000000000000000000000000000000000000',
+            markdownGuide = 'Markdown Guide',
+            locale = 'en',
+            saved = 'saved',
+            saving = 'autosaving',
+            whmcsBaseUrl = "";
+            var recaptcha = {"requiredText":"Required","siteKey":"6LdLT5UqAAAAAGOMrS3BdN1ryxq-BO9uo74QKIT4","apiObject":"grecaptcha","libUrl":"https:\/\/www.google.com\/recaptcha\/api.js?onload=recaptchaLoadCallback&render=explicit"}    </script>
+            <script>disableInternalTabSelection = true</script>
+            <script defer src="/templates/lagom2/assets/js/scripts.min.js?v=2.2.8"></script>
+    <script defer src="/templates/lagom2/assets/js/core.min.js?v=2.2.8"></script>
+
+        
+                
+
+                    <link rel="preload" href="/assets/css/fontawesome-all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+            </head>
+    <body class="lagom page-login page-login-secondary lagom-not-portal lagom-layout-top lagom-layout-condensed lagom-depth page-login page-type-full page-lagom-cms" data-phone-cc-input="1">
+
+    
+        
+
+                
+
+    
+    
+    
+    
+    
+    
+
+
+
+
+                    
+
+<div class="app-main ">
+                        
+
+    <div class="main-body">
+        <div class="container">
+                    
+
+    
+    
+    
+    
+    
+    
+
+
+
+
+                        <div class="login">
+                        <div class="login-header">
+                                                                                        <a class="logo" href="/"><img src="/templates/lagom2/assets/img/logo/logo_big.823324024.png" title="SixtyNet" alt="SixtyNet"/></a>
+                          
+    </div>
+      
+                <div class="login-wrapper">
+            <div class="login-body"> 
+                <h1 class="login-title">Secure Client Login</h1>
+                                                                    <div class="providerLinkingFeedback"></div>
+                                <form class="login-form" method="post" action="/index.php?rp=/login" role="form">
+<input type="hidden" name="token" value="0000" />
+                    <div class="form-group">
+                        <label for="inputEmail">Email Address</label>
+                        <input type="email" name="username" class="form-control input-lg" id="inputEmail" placeholder="Enter email" autofocus tabindex="1">
+                    </div>
+                    <div class="form-group">
+                        <div class="d-flex space-between">
+                            <label for="inputPassword">Password</label>
+                            <a href="/index.php?rp=/password/reset" tabindex="3">Forgot?</a>
+                        </div>
+                        <input type="password" name="password" class="form-control input-lg" id="inputPassword" placeholder="Password" autocomplete="off" tabindex="2">
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox m-b-2x">
+                            <input class="icheck-control" type="checkbox" name="rememberme" /> Remember Me
+                        </label>
+                    </div>
+                                        <div class="login-captcha">
+                             
+                                                                </div>
+                                                            <button type="submit" class="btn btn-lg btn-primary btn-block  btn-recaptcha btn-recaptcha-invisible" id="login" tabindex="4">
+                        <span class="btn-text">
+                            Login
+                        </span>
+                        <div class="loader loader-button hidden" >
+                             
+    <div class="spinner spinner-sm spinner-light">
+        <div class="rect1"></div>
+        <div class="rect2"></div>
+        <div class="rect3"></div>
+        <div class="rect4"></div>
+        <div class="rect5"></div>
+    </div>
+                             </div>
+                    </button>
+                </form>
+                                <div class="login-divider">
+                    <span></span>
+                    <span>or</span>
+                    <span></span>
+                </div> 
+                            
+        <div id="providerLinkingMessages" class="hidden">
+            <p class="providerLinkingMsg-preLink-init_failed">
+                <span class="provider-name"></span> is unavailable at this time. Please try again later.
+            </p>
+            <p class="providerLinkingMsg-preLink-connect_error">
+                <strong>Error</strong> We were unable to connect your account. Please contact your system administrator.
+            </p>
+            <p class="providerLinkingMsg-preLink-complete_sign_in">
+                Please complete sign in with your chosen service provider.
+            </p>
+            <p class="providerLinkingMsg-preLink-2fa_needed">
+                Automatic sign-in successful! Redirecting...
+            </p>
+            <p class="providerLinkingMsg-preLink-linking_complete">
+                <strong>Success!</strong> Your account is now linked with your :displayName account.
+            </p>
+            <p class="providerLinkingMsg-preLink-login_to_link-signin-required">
+                <strong>Link Initiated!</strong> Please complete sign in to associate this service with your existing account. You will only have to do this once.
+            </p>
+            <p class="providerLinkingMsg-preLink-login_to_link-registration-required">
+                <strong>Link Initiated!</strong> Please complete the registration form below.
+            </p>
+            <p class="providerLinkingMsg-preLink-checkout-new">
+                <strong>Link Initiated!</strong> Please complete your new account information.
+            </p>
+            <p class="providerLinkingMsg-preLink-other_user_exists">
+                <strong>Error</strong> This account is already connected to an existing account with us. Please choose a different account at the third party authentication provider.
+            </p>
+            <p class="providerLinkingMsg-preLink-already_linked">
+                <strong>Error</strong> This account is already connected to your account with us. Please choose a different account at the third party authentication provider.
+            </p>
+            <p class="providerLinkingMsg-preLink-default">
+                <strong>Error</strong> We were unable to connect your account. Please contact your system administrator.
+            </p>
+        </div>        
+                <div class="providerPreLinking" data-link-context="login" data-hide-on-prelink=0 data-disable-on-prelink=0>
+            <div class="social-signin-btns">
+                                                            <script>
+    window.onerror = function(e){
+        WHMCS.authn.provider.displayError();
+    };
+
+    function onSignIn(credentialResponse) {
+        WHMCS.authn.provider.preLinkInit();
+
+        var failIfExists = 0;
+        if ("login" === "register"
+           || "login" === "connect"
+        ) {
+            failIfExists = 1;
+        }
+        
+        var context = {
+            htmlTarget: "login",
+            targetLogin: "login",
+            targetRegister: "register",
+            redirectUrl: "%2Fclientarea.php"
+        };
+        var config = {
+            url: "/index.php?rp=/auth/provider/google_signin/finalize",
+            method: "POST",
+            dataType: "json",
+            data: {
+                id_token: credentialResponse.credential,
+                fail_if_exists: failIfExists,
+                token: "0000000000000000000000000000000000000000",
+                cartCheckout: 0
+            }
+        };
+        var provider = {
+            "name": "Google",
+            "icon":  "<img src=\"/assets/img/auth/google_icon.png\" width=\"17px\" height=\"17px\" alt=\"googleIcon\" /> "
+        };
+
+        var providerDone = function () { };
+        var providerError = function () { };
+
+        WHMCS.authn.provider.signIn(config, context, provider, providerDone, providerError);
+    }
+</script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>            <div id="g_id_onload"
+                data-client_id="40253362140-9j8oei2ik8io7ec2k3s0g3gk0r03v6pb.apps.googleusercontent.com"
+                data-callback="onSignIn"
+                data-ux_mode="popup"
+                data-auto_prompt="false"
+                style="display: none"
+            ></div>
+            <div id="btnGoogleSignin1"
+                class="g_id_signin btn btn-social btn-google"
+                data-locale="en"
+                data-type="standard"
+                data-logo_alignment="center"
+            ></div>
+                                                </div>
+        </div>
+                                                        </div>
+                        <div class="login-footer">
+                <div class="text-light">Not a member yet? <a href="/register.php" tabindex="5" >Create a New Account</a></div>
+            </div>
+                    </div>
+                                <div class="login-language dropdown dropup language" data-language-select>
+                <span>Language:&nbsp;</span>
+                <a class="dropdown-toggle" data-toggle="dropdown" href="#">
+                    English
+                    <b class="ls ls-caret"></b>
+                </a>
+                    <div class="dropdown-menu dropdown-language-search dropdown-lazy dropdown-menu-center" >
+                                                <input type="hidden" data-language-select-value value="English">
+        <input type="hidden" data-language-select-backlink value="/index.php?rp=%2Flogin&amp;">
+        <input type="hidden" data-language-select-lang value="Select">
+        <div class="dropdown-header input-group align-center">
+            <i class="input-group-icon lm lm-search"></i>
+            <input class="form-control" placeholder="Search..." type="text" data-language-select-search>
+        </div>
+        <div class="nav-divider"></div>
+        <div class="dropdown-menu-items has-scroll" data-language-select-list>
+                    <div class="dropdown-menu-item " data-value="arabic" data-language="العربية">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=arabic" rel="nofollow">
+                    <span class="language-flag flag-arabic">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/arabic.svg"/>
+                    </span>
+                    <span class="language-text">العربية</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="azerbaijani" data-language="Azerbaijani">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=azerbaijani" rel="nofollow">
+                    <span class="language-flag flag-azerbaijani">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/azerbaijani.svg"/>
+                    </span>
+                    <span class="language-text">Azerbaijani</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="catalan" data-language="Català">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=catalan" rel="nofollow">
+                    <span class="language-flag flag-catalan">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/catalan.svg"/>
+                    </span>
+                    <span class="language-text">Català</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="chinese" data-language="中文">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=chinese" rel="nofollow">
+                    <span class="language-flag flag-chinese">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/chinese.svg"/>
+                    </span>
+                    <span class="language-text">中文</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="croatian" data-language="Hrvatski">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=croatian" rel="nofollow">
+                    <span class="language-flag flag-croatian">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/croatian.svg"/>
+                    </span>
+                    <span class="language-text">Hrvatski</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="czech" data-language="Čeština">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=czech" rel="nofollow">
+                    <span class="language-flag flag-czech">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/czech.svg"/>
+                    </span>
+                    <span class="language-text">Čeština</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="danish" data-language="Dansk">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=danish" rel="nofollow">
+                    <span class="language-flag flag-danish">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/danish.svg"/>
+                    </span>
+                    <span class="language-text">Dansk</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="dutch" data-language="Nederlands">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=dutch" rel="nofollow">
+                    <span class="language-flag flag-dutch">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/dutch.svg"/>
+                    </span>
+                    <span class="language-text">Nederlands</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item active" data-value="english" data-language="English">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=english" rel="nofollow">
+                    <span class="language-flag flag-english">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/english.svg"/>
+                    </span>
+                    <span class="language-text">English</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="estonian" data-language="Estonian">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=estonian" rel="nofollow">
+                    <span class="language-flag flag-estonian">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/estonian.svg"/>
+                    </span>
+                    <span class="language-text">Estonian</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="farsi" data-language="Persian">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=farsi" rel="nofollow">
+                    <span class="language-flag flag-farsi">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/farsi.svg"/>
+                    </span>
+                    <span class="language-text">Persian</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="french" data-language="Français">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=french" rel="nofollow">
+                    <span class="language-flag flag-french">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/french.svg"/>
+                    </span>
+                    <span class="language-text">Français</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="german" data-language="Deutsch">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=german" rel="nofollow">
+                    <span class="language-flag flag-german">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/german.svg"/>
+                    </span>
+                    <span class="language-text">Deutsch</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="hebrew" data-language="עברית">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=hebrew" rel="nofollow">
+                    <span class="language-flag flag-hebrew">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/hebrew.svg"/>
+                    </span>
+                    <span class="language-text">עברית</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="hungarian" data-language="Magyar">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=hungarian" rel="nofollow">
+                    <span class="language-flag flag-hungarian">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/hungarian.svg"/>
+                    </span>
+                    <span class="language-text">Magyar</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="italian" data-language="Italiano">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=italian" rel="nofollow">
+                    <span class="language-flag flag-italian">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/italian.svg"/>
+                    </span>
+                    <span class="language-text">Italiano</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="macedonian" data-language="Macedonian">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=macedonian" rel="nofollow">
+                    <span class="language-flag flag-macedonian">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/macedonian.svg"/>
+                    </span>
+                    <span class="language-text">Macedonian</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="norwegian" data-language="Norwegian">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=norwegian" rel="nofollow">
+                    <span class="language-flag flag-norwegian">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/norwegian.svg"/>
+                    </span>
+                    <span class="language-text">Norwegian</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="portuguese-br" data-language="Português">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=portuguese-br" rel="nofollow">
+                    <span class="language-flag flag-portuguese-br">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/portuguese-br.svg"/>
+                    </span>
+                    <span class="language-text">Português</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="portuguese-pt" data-language="Português">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=portuguese-pt" rel="nofollow">
+                    <span class="language-flag flag-portuguese-pt">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/portuguese-pt.svg"/>
+                    </span>
+                    <span class="language-text">Português</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="romanian" data-language="Română">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=romanian" rel="nofollow">
+                    <span class="language-flag flag-romanian">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/romanian.svg"/>
+                    </span>
+                    <span class="language-text">Română</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="russian" data-language="Русский">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=russian" rel="nofollow">
+                    <span class="language-flag flag-russian">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/russian.svg"/>
+                    </span>
+                    <span class="language-text">Русский</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="spanish" data-language="Español">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=spanish" rel="nofollow">
+                    <span class="language-flag flag-spanish">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/spanish.svg"/>
+                    </span>
+                    <span class="language-text">Español</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="swedish" data-language="Svenska">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=swedish" rel="nofollow">
+                    <span class="language-flag flag-swedish">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/swedish.svg"/>
+                    </span>
+                    <span class="language-text">Svenska</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="turkish" data-language="Türkçe">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=turkish" rel="nofollow">
+                    <span class="language-flag flag-turkish">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/turkish.svg"/>
+                    </span>
+                    <span class="language-text">Türkçe</span>
+                </a>
+            </div>
+                    <div class="dropdown-menu-item " data-value="ukranian" data-language="Українська">
+                                                                    <a href="/index.php?rp=%2Flogin&amp;language=ukranian" rel="nofollow">
+                    <span class="language-flag flag-ukranian">
+                        <img class="lazyload hidden" data-src="/templates/lagom2/assets/img/flags/ukranian.svg"/>
+                    </span>
+                    <span class="language-text">Українська</span>
+                </a>
+            </div>
+                </div>
+        <div class="dropdown-menu-item dropdown-menu-no-data">
+            <span class="text-info text-large">
+                No Records Found
+            </span>
+        </div>                  
+    </div>
+            </div>
+               
+    </div>
+            </div>
+    </div>
+
+
+                    
+
+    
+    
+    
+    
+    
+    
+
+
+
+
+                        
+    
+        </div>         <div id="fullpage-overlay" class="hidden">
+        <div class="outer-wrapper">
+            <div class="inner-wrapper">
+                <img class="lazyload" data-src="/assets/img/overlay-spinner.svg">
+                <br>
+                <span class="msg"></span>
+            </div>
+        </div>
+    </div>
+    <div class="modal system-modal fade" id="modalAjax" tabindex="-1" role="dialog" aria-hidden="true" style="display: none">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><i class="lm lm-close"></i></button>
+                    <h5 class="modal-title"></h5>
+                </div>
+                <div class="modal-body">
+                    <div class="loader">
+                         
+    <div class="spinner ">
+        <div class="rect1"></div>
+        <div class="rect2"></div>
+        <div class="rect3"></div>
+        <div class="rect4"></div>
+        <div class="rect5"></div>
+    </div>
+                         </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary modal-submit">
+                        Submit
+                    </button>
+                    <button type="button" class="btn btn-default" data-dismiss="modal">
+                    Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+        <form action="#" id="frmGeneratePassword" class="form-horizontal">
+    <div class="modal fade" id="modalGeneratePassword" style="display: none">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><i class="lm lm-close"></i></button>
+                    <h5 class="modal-title">
+                        Generate Password
+                    </h5>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-lagom alert-danger hidden" id="generatePwLengthError">
+                        Please enter a number between 8 and 64 for the password length
+                    </div>
+                    <div class="form-group row align-items-center">
+                        <label for="inputGeneratePasswordLength" class="col-md-4 control-label">Password Length</label>
+                        <div class="col-md-8">
+                            <input type="number" min="8" max="64" value="12" step="1" class="form-control input-inline input-inline-100" id="inputGeneratePasswordLength">
+                        </div>
+                    </div>
+                    <div class="form-group row align-items-center">
+                        <label for="inputGeneratePasswordOutput" class="col-md-4 control-label">Generated Password</label>
+                        <div class="col-md-8">
+                            <input type="text" class="form-control" id="inputGeneratePasswordOutput">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-8 offset-md-4">
+                            <button type="submit" class="btn btn-default btn-sm">
+                                <i class="ls ls-plus"></i>
+                                Generate new password
+                            </button>
+                            <button type="button" class="btn btn-default btn-sm copy-to-clipboard" data-clipboard-target="#inputGeneratePasswordOutput">
+                                <i class="ls ls-copy"></i>
+                                Copy
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">
+                        Close
+                    </button>
+                    <button type="button" class="btn btn-primary" id="btnGeneratePasswordInsert" data-clipboard-target="#inputGeneratePasswordOutput">
+                        Copy to clipboard and Insert
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+    <script defer src="https://sixtynet.net/templates/lagom2/core/extensions/CMS/assets/js/lagom-cms.js?v=1.0.4"></script>
+
+    <div class="overlay"></div>
+    <script defer src="/templates/lagom2/assets/js/vendor.js?v=2.2.8"></script>
+    <script defer src="/templates/lagom2/assets/js/lagom-app.js?v=2.2.8"></script>
+        </body>
+</html>    

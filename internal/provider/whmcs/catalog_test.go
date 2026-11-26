@@ -1,13 +1,19 @@
 package whmcs
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 
 	"github.com/genguzzz/restockd/internal/domain"
+	"github.com/genguzzz/restockd/internal/fetch"
+	"github.com/genguzzz/restockd/internal/provider"
 )
 
 func newTestProvider(t *testing.T) *Provider {
@@ -198,5 +204,59 @@ func TestParseSpecsTable(t *testing.T) {
 	}
 	if specs.Extra["traffic"] != "Unlimited Traffic" || specs.Extra["note1"] != "KVM & 原生 IP" || len(specs.Extra) != 2 {
 		t.Fatalf("only unmatched lines go to extra (html unescaped): %+v", specs.Extra)
+	}
+}
+
+// SixtyNet：Lagom2、「N Available」库存，未开短网址（商品链接为 index.php?rp=/store/...）。
+func TestParseGroupSixtyNet(t *testing.T) {
+	body, err := os.ReadFile("../../../testdata/whmcs/sixtynet_att_residential.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, _ := New(domain.Site{ID: "sixtynet", BaseURL: "https://sixtynet.net", Config: map[string]string{"groups": "at-and-t-mobility-residential", "currency": "USD"}})
+	products, err := instance.(*Provider).ParseGroup(body, "at-and-t-mobility-residential", "https://sixtynet.net/index.php?rp=/store/at-and-t-mobility-residential")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(products) != 4 {
+		t.Fatalf("products: %d", len(products))
+	}
+	starter := products[0]
+	if starter.ID != "25" || starter.Name != "Residential-STARTER" || starter.Specs.RAMMB != 2048 || starter.Specs.TrafficGB != 5000 ||
+		starter.Stock.Status != domain.StockOut || starter.Prices[0].Amount.Cents != 2500 ||
+		starter.URL != "https://sixtynet.net/index.php?rp=/store/at-and-t-mobility-residential/att-moble-starter" {
+		t.Fatalf("starter: %+v", starter)
+	}
+}
+
+func TestCatalogFallsBackToRouteParam(t *testing.T) {
+	body, err := os.ReadFile("../../../testdata/whmcs/sixtynet_att_residential.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.RequestURI())
+		if r.URL.Path == "/index.php" && r.URL.Query().Get("rp") == "/store/at-and-t-mobility-residential" {
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	site := domain.Site{ID: "sixtynet", BaseURL: server.URL, Config: map[string]string{"groups": "at-and-t-mobility-residential"}}
+	instance, _ := New(site)
+	client, _ := fetch.NewHTTPClient(5*time.Second, "")
+	session, _ := fetch.NewSession(server.URL, nil, "")
+	env := provider.Env{Site: site, Client: client, Session: session}
+	for range 2 {
+		catalog, err := instance.Catalog(context.Background(), env)
+		if err != nil || len(catalog.Products) != 4 {
+			t.Fatalf("catalog: %v %d", err, len(catalog.Products))
+		}
+	}
+	// 第一次 /store/ 404 后切到 rp=，第二次直接用 rp=。
+	if len(paths) != 3 || paths[0] != "/store/at-and-t-mobility-residential" || paths[2] != "/index.php?rp=/store/at-and-t-mobility-residential" {
+		t.Fatalf("requests: %v", paths)
 	}
 }

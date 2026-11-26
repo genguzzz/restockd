@@ -64,6 +64,8 @@ type Provider struct {
 	mu sync.Mutex
 	// checkoutCaptcha 最近见到的结算页验证码，锁单时据此提前求解。
 	checkoutCaptcha *pageCaptcha
+	// routeParam 站点未开 WHMCS 短网址（/store/... 404），改用 index.php?rp=/store/...。
+	routeParam bool
 }
 
 // New 构造实例。
@@ -82,12 +84,32 @@ func New(site domain.Site) (provider.Provider, error) {
 // Meta 实现 provider.Provider。
 func (p *Provider) Meta() provider.Meta { return meta() }
 
-// GroupURL 商品组页面地址。
+// GroupURL 商品组页面地址：数字为 gid；slug 默认走短网址 /store/{slug}，站点没开短网址时走 index.php?rp=。
 func (p *Provider) GroupURL(group string) string {
 	if _, err := strconv.Atoi(group); err == nil {
 		return p.baseURL + "/cart.php?gid=" + group
 	}
+	p.mu.Lock()
+	routeParam := p.routeParam
+	p.mu.Unlock()
+	if routeParam {
+		return p.baseURL + "/index.php?rp=/store/" + group
+	}
 	return p.baseURL + "/store/" + group
+}
+
+// useRouteParam 短网址 404 时切到 index.php?rp= 形式；返回是否发生了切换（已切过返回 false）。
+func (p *Provider) useRouteParam(group string) bool {
+	if _, err := strconv.Atoi(group); err == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.routeParam {
+		return false
+	}
+	p.routeParam = true
+	return true
 }
 
 // Catalog 逐组抓取并合并。
@@ -98,6 +120,12 @@ func (p *Provider) Catalog(ctx context.Context, env provider.Env) (domain.Catalo
 		resp, err := env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodGet, URL: pageURL})
 		if err != nil {
 			return domain.Catalog{}, err
+		}
+		if resp.StatusCode == http.StatusNotFound && p.useRouteParam(group) {
+			pageURL = p.GroupURL(group)
+			if resp, err = env.Client.Do(ctx, env.Session, &fetch.Request{Method: http.MethodGet, URL: pageURL}); err != nil {
+				return domain.Catalog{}, err
+			}
 		}
 		if resp.StatusCode != http.StatusOK {
 			return domain.Catalog{}, &fetch.HTTPError{StatusCode: resp.StatusCode, URL: pageURL}
