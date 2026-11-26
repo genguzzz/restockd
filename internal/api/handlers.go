@@ -194,7 +194,8 @@ func (s *Server) handleListProducts(w http.ResponseWriter, r *http.Request) {
 		if status != "" && string(product.Stock.Status) != status {
 			continue
 		}
-		if keyword != "" && !strings.Contains(strings.ToLower(product.Name+" "+product.Group+" "+product.Specs.Location), keyword) {
+		// 关键词也匹配商品 ID（如 isp-att-xxs，名字里的 AT&T 搜 att 搜不到）。
+		if keyword != "" && !strings.Contains(strings.ToLower(product.ID+" "+product.Name+" "+product.Group+" "+product.Specs.Location), keyword) {
 			continue
 		}
 		dto := productDTO{Product: product, Watched: watched[key], Hidden: hidden[key]}

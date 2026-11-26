@@ -185,7 +185,7 @@ func (p *Provider) product(plan rawPlan) domain.Product {
 	product := domain.Product{
 		ID:    plan.Key,
 		Group: cmp.Or(plan.OfferLabel, plan.Family),
-		Name:  strings.Join(nonEmpty(plan.Name, plan.Location), " · "),
+		Name:  productName(plan),
 		URL:   p.baseURL + "/#/buy/" + plan.Key,
 		Specs: domain.Specs{
 			CPU:           strconv.Itoa(plan.VCPU),
@@ -225,6 +225,20 @@ func (p *Provider) product(plan rawPlan) domain.Product {
 		product.OSTemplates = append(product.OSTemplates, domain.Choice{Value: image.Key, Label: image.Name})
 	}
 	return product
+}
+
+// productName 「套餐 · 运营商 · 机房」，预售加后缀：同名套餐（ISP-XS 等）在多个线路都有，靠运营商与机房区分。
+// 独服的 carrier 是泛称（Dedicated physical server），不放进名字。
+func productName(plan rawPlan) string {
+	carrier := plan.Carrier
+	if plan.Physical {
+		carrier = ""
+	}
+	name := strings.Join(nonEmpty(plan.Name, carrier, plan.Location), " · ")
+	if strings.HasPrefix(plan.AvailabilityStatus, "preorder") || (plan.Preorder != nil && plan.Preorder.Available) {
+		name += "（预售）"
+	}
+	return name
 }
 
 // stock 站点库存状态：available 可买；sold_out / reserved（剩余库存正被他人结账）无货；

@@ -149,7 +149,7 @@ func TestCatalog(t *testing.T) {
 		t.Fatalf("products=%d gateways=%v", len(catalog.Products), catalog.Gateways)
 	}
 	texas := catalog.Products[0]
-	if texas.ID != "isp-texas-xxs" || texas.Name != "ISP-XXS · Odessa, TX" || texas.Stock.Status != domain.StockIn || *texas.Stock.Qty != 39 {
+	if texas.ID != "isp-texas-xxs" || texas.Name != "ISP-XXS · NetWest · Odessa, TX" || texas.Stock.Status != domain.StockIn || *texas.Stock.Qty != 39 {
 		t.Fatalf("texas: %+v", texas)
 	}
 	if texas.Specs.RAMMB != 1024 || texas.Specs.BandwidthMbps != 1000 || texas.Specs.TrafficGB != 1000 || len(texas.OSTemplates) != 2 {
@@ -162,6 +162,9 @@ func TestCatalog(t *testing.T) {
 		if got := catalog.Products[i].Stock.Status; got != want {
 			t.Errorf("product %s stock %s, want %s", catalog.Products[i].ID, got, want)
 		}
+	}
+	if name := catalog.Products[2].Name; name != "ISP-XS · Los Angeles, CA（预售）" {
+		t.Fatalf("preorder name: %q", name)
 	}
 	if metal := catalog.Products[3]; len(metal.Prices) != 1 {
 		t.Fatalf("bare metal is monthly only: %+v", metal.Prices)
