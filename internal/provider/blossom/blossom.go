@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -114,7 +115,14 @@ type rawPlan struct {
 	InStock            bool               `json:"in_stock"`
 	AvailabilityStatus string             `json:"availability_status"`
 	TermPrices         map[string]float64 `json:"term_prices"`
-	OSImages           []struct {
+	// Preorder 预售套餐（如 AT&T 洛杉矶）：Available 为开放预订，Remaining 剩余名额；下单须带 Version 表示接受预售条款。
+	Preorder *struct {
+		Available      bool     `json:"available"`
+		Version        string   `json:"version"`
+		Remaining      int      `json:"remaining"`
+		PaymentMethods []string `json:"payment_methods"`
+	} `json:"preorder"`
+	OSImages []struct {
 		Key  string `json:"key"`
 		Name string `json:"name"`
 		Kind string `json:"kind"`
@@ -212,19 +220,20 @@ func (p *Provider) product(plan rawPlan) domain.Product {
 }
 
 // stock 站点库存状态：available 可买；sold_out / reserved（剩余库存正被他人结账）无货；
-// preorder_* 预售，开放时可下单；coming_soon 未开卖。
+// 预售套餐看 preorder.available（开放时可下单，名额为 remaining），关闭时为 closed；coming_soon 未开卖。
 func stock(plan rawPlan) domain.Stock {
 	qty := plan.StockCount
 	status := plan.AvailabilityStatus
 	switch {
 	case plan.ComingSoon:
 		return domain.Stock{Status: domain.StockClosed, Reason: "coming_soon"}
+	case plan.Preorder != nil && plan.Preorder.Available:
+		remaining := plan.Preorder.Remaining
+		return domain.Stock{Status: domain.StockPreorder, Qty: &remaining, Reason: status}
+	case plan.Preorder != nil || strings.HasPrefix(status, "preorder"):
+		return domain.Stock{Status: domain.StockClosed, Reason: status}
 	case plan.InStock || status == "available":
 		return domain.Stock{Status: domain.StockIn, Qty: &qty, Reason: status}
-	case strings.HasPrefix(status, "preorder") && status != "preorder_closed":
-		return domain.Stock{Status: domain.StockPreorder, Reason: status}
-	case status == "preorder_closed":
-		return domain.Stock{Status: domain.StockClosed, Reason: status}
 	default:
 		zero := 0
 		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: cmp.Or(status, "sold_out")}
@@ -327,6 +336,13 @@ func (p *Provider) payload(ctx context.Context, env provider.Env, spec domain.Or
 		}
 	}
 	sort.Strings(payload.Addons)
+	if plan.Preorder != nil {
+		// 预售：等同网页上勾选「交付最长 30 天」的预售条款；预售不支持加密货币支付。
+		payload.PreorderAccepted, payload.PreorderVersion = true, &plan.Preorder.Version
+		if methods := plan.Preorder.PaymentMethods; payload.Provider == "crypto" || (len(methods) > 0 && !slices.Contains(methods, payload.Provider)) {
+			return orderPayload{}, rawPlan{}, fmt.Errorf("%w: preorder accepts %v, not %s", provider.ErrOrderRejected, plan.Preorder.PaymentMethods, payload.Provider)
+		}
+	}
 	if plan.Physical { // 独服：只按月、只刷卡、无附加项与优惠码（与前端一致）
 		payload.TermMonths, payload.Addons, payload.Coupon, payload.Provider = 1, []string{}, nil, "stripe"
 	}

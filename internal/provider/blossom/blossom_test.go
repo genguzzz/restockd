@@ -1,11 +1,13 @@
 package blossom
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,7 +19,7 @@ import (
 const catalogJSON = `{"plans":[
  {"key":"isp-texas-xxs","name":"ISP-XXS","family":"isp","offer_label":"ISP — Odessa, TX · NetWest · 1 Gbps","location":"Odessa, TX","carrier":"NetWest","ip_label":"NetWest ISP IPv4","storage_label":"NVMe","vcpu":1,"ram_gb":1,"disk_gb":15,"hdd_gb":0,"bandwidth_gbps":1,"transfer_gb":1000,"coming_soon":false,"physical":false,"stock_count":39,"in_stock":true,"availability_status":"available","term_prices":{"1":17.0,"3":51.0,"6":102.0,"12":204.0},"os_images":[{"key":"debian-12","name":"Debian 12","kind":"linux"},{"key":"rocky-9","name":"Rocky Linux 9","kind":"linux"}]},
  {"key":"isp-xs","name":"ISP-XS","family":"isp","offer_label":"ISP — Washington, DC","location":"Washington, DC","vcpu":2,"ram_gb":2,"disk_gb":20,"bandwidth_gbps":1,"stock_count":0,"in_stock":false,"availability_status":"sold_out","term_prices":{"1":19.0},"os_images":[]},
- {"key":"isp-att-xs","name":"ISP-XS","family":"isp","location":"Los Angeles, CA","stock_count":0,"in_stock":false,"availability_status":"preorder_closed","term_prices":{"1":19.0}},
+ {"key":"isp-att-xs","name":"ISP-XS","family":"isp","location":"Los Angeles, CA","stock_count":0,"in_stock":false,"availability_status":"preorder_closed","term_prices":{"3":45.9,"12":162.0},"preorder":{"available":false,"version":"att-v1","remaining":0,"payment_methods":["stripe","alipay"]}},
  {"key":"metal-427","name":"AMD Epyc 4545P","family":"metal","location":"Amsterdam","physical":true,"stock_count":1,"in_stock":true,"availability_status":"available","term_prices":{"1":199.0,"3":597.0}}
 ],"payment_methods":[{"key":"stripe","status":"live"},{"key":"alipay","status":"live"},{"key":"crypto","status":"unavailable"}]}`
 
@@ -28,6 +30,8 @@ type fakeSite struct {
 	lastQuote orderPayload
 	cancelled string
 	checkouts int
+	// catalog 覆盖默认目录（模拟预售开放等变化）。
+	catalog string
 }
 
 func (f *fakeSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +52,7 @@ func (f *fakeSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.URL.Path {
 	case "/api/catalog":
-		_, _ = w.Write([]byte(catalogJSON))
+		_, _ = w.Write([]byte(cmp.Or(f.catalog, catalogJSON)))
 	case "/auth/email/login":
 		var creds map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&creds)
@@ -129,6 +133,40 @@ func TestCatalog(t *testing.T) {
 	p.families = map[string]bool{"metal": true}
 	if catalog, _ = p.Catalog(context.Background(), env); len(catalog.Products) != 1 {
 		t.Fatalf("family filter: %d", len(catalog.Products))
+	}
+}
+
+func TestPreorder(t *testing.T) {
+	fake := &fakeSite{checkout: func(w http.ResponseWriter, payload orderPayload) {
+		if !payload.PreorderAccepted || payload.PreorderVersion == nil || *payload.PreorderVersion != "att-v1" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"Accept the preorder notice."}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"order_id":502,"checkout_url":"https://pay.example/502","provider":"alipay"}`))
+	}}
+	p, env := newEnv(t, fake)
+	ctx := context.Background()
+	if _, err := p.Login(ctx, env, domain.Credentials{Username: "me@example.com", Password: "right"}); err != nil {
+		t.Fatal(err)
+	}
+	spec := domain.OrderSpec{ProductID: "isp-att-xs", Cycle: domain.CycleAnnually}
+	if _, err := p.PlaceOrder(ctx, env, spec); !errors.Is(err, provider.ErrOutOfStock) {
+		t.Fatalf("closed preorder: %v", err)
+	}
+	opened := strings.Replace(catalogJSON, `"available":false,"version":"att-v1","remaining":0`, `"available":true,"version":"att-v1","remaining":5`, 1)
+	fake.catalog = opened
+	catalog, _ := p.Catalog(ctx, env)
+	if stock := catalog.Products[2].Stock; stock.Status != domain.StockPreorder || *stock.Qty != 5 {
+		t.Fatalf("open preorder stock: %+v", stock)
+	}
+	result, err := p.PlaceOrder(ctx, env, spec)
+	if err != nil || result.OrderID != "502" || fake.lastQuote.TermMonths != 12 {
+		t.Fatalf("preorder order: %v %+v months=%d", err, result, fake.lastQuote.TermMonths)
+	}
+	spec.Gateway = "crypto"
+	if _, err := p.PlaceOrder(ctx, env, spec); !errors.Is(err, provider.ErrOrderRejected) {
+		t.Fatalf("preorder with crypto: %v", err)
 	}
 }
 
