@@ -308,3 +308,16 @@ func TestStaleClearanceDroppedBeforeBrowser(t *testing.T) {
 		t.Fatalf("challenge without clearance goes straight to the browser: %v calls=%d", err, route.calls)
 	}
 }
+
+// ProxyFor 报告接下来会用的出口代理：第一个未冷却的出口，直连为空串。
+func TestProxyForSkipsCoolingRoutes(t *testing.T) {
+	health := NewHealth()
+	client := &Client{SiteID: "s", Health: health, Routes: []Route{{ID: "p1", Proxy: "socks5://127.0.0.1:10808"}, {ID: Direct}}}
+	if got := client.ProxyFor("https://shop.example/login"); got != "socks5://127.0.0.1:10808" {
+		t.Fatalf("first route proxy expected, got %q", got)
+	}
+	health.cool(coolKey{route: "p1"}, time.Minute)
+	if got := client.ProxyFor("https://shop.example/login"); got != "" {
+		t.Fatalf("cooling proxy must be skipped (direct next), got %q", got)
+	}
+}

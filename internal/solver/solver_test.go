@@ -159,15 +159,18 @@ func TestExternalSolverSendsInvisible(t *testing.T) {
 	}))
 	defer server.Close()
 	ext := &ExternalSolver{Endpoint: server.URL}
-	for _, challenge := range []Challenge{{Kind: KindRecaptchaV2, SiteKey: "k", Invisible: true}, {Kind: KindTurnstile, SiteKey: "k"}} {
+	for _, challenge := range []Challenge{{Kind: KindRecaptchaV2, SiteKey: "k", Invisible: true, Proxy: "socks5://127.0.0.1:10808"}, {Kind: KindTurnstile, SiteKey: "k"}} {
 		if _, err := ext.Solve(context.Background(), challenge); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if len(got) != 2 || got[0]["invisible"] != true {
-		t.Fatalf("invisible recaptcha must send invisible=true: %+v", got)
+	if len(got) != 2 || got[0]["invisible"] != true || got[0]["proxy"] != "socks5://127.0.0.1:10808" {
+		t.Fatalf("invisible recaptcha must send invisible=true and the egress proxy: %+v", got)
 	}
 	if _, present := got[1]["invisible"]; present {
 		t.Fatalf("non-invisible challenge must omit invisible: %+v", got[1])
+	}
+	if _, present := got[1]["proxy"]; present {
+		t.Fatalf("direct egress must omit proxy: %+v", got[1])
 	}
 }

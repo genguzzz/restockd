@@ -111,13 +111,21 @@ func (env Env) AccountID() string {
 	return env.Account.ID
 }
 
-// Solve 交给 env.Solver 求解验证码：补上站点与账号，求解结果附带的 Cookie / UA 写回会话。
+// proxyHinter 能报告当前出口代理的 Client（egress.Client）：验证码要在提交表单的同一出口上求解。
+type proxyHinter interface {
+	ProxyFor(rawURL string) string
+}
+
+// Solve 交给 env.Solver 求解验证码：补上站点、账号与当前出口代理，求解结果附带的 Cookie / UA 写回会话。
 func (env Env) Solve(ctx context.Context, challenge solver.Challenge) (solver.Solution, error) {
 	if env.Solver == nil {
 		return solver.Solution{}, fmt.Errorf("solve %s: no solver configured", challenge.Kind)
 	}
 	challenge.SiteID = env.Site.ID
 	challenge.AccountID = env.AccountID()
+	if hint, ok := env.Client.(proxyHinter); ok && challenge.Proxy == "" {
+		challenge.Proxy = hint.ProxyFor(challenge.PageURL)
+	}
 	solution, err := env.Solver.Solve(ctx, challenge)
 	if err != nil {
 		return solver.Solution{}, fmt.Errorf("solve %s: %w", challenge.Kind, err)

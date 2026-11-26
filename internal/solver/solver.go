@@ -34,7 +34,10 @@ type Challenge struct {
 	PageURL string `json:"page_url"`
 	Action  string `json:"action,omitempty"`
 	// Invisible 隐形 reCAPTCHA v2（无勾选框，提交时 grecaptcha.execute）：打码服务需按 invisible 求解，否则 token 会被站点拒绝。
-	Invisible bool   `json:"invisible,omitempty"`
+	Invisible bool `json:"invisible,omitempty"`
+	// Proxy 站点当前出口的代理地址（直连为空）：求解服务应经同一出口生成 token，站点会拒绝换了 IP 或被拉黑出口的 token。
+	// 可能含代理凭据，不回传界面。
+	Proxy     string `json:"-"`
 	SiteID    string `json:"site_id"`
 	AccountID string `json:"account_id,omitempty"`
 	// Purpose 给人看的用途说明，如"usvps24 下单 pinnacle-network-2"。

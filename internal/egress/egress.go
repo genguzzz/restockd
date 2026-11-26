@@ -329,6 +329,17 @@ func (c *Client) Do(ctx context.Context, session *fetch.Session, req *fetch.Requ
 	return resp, err
 }
 
+// ProxyFor 对 rawURL 的请求接下来会用的出口代理（第一个未冷却的出口；直连为空串）。
+// 验证码求解服务据此走同一出口：有的站点只认生成 token 与提交表单来自同一 IP。
+func (c *Client) ProxyFor(rawURL string) string {
+	for _, route := range c.Routes {
+		if c.Health.Cooling(c.SiteID, route.ID, rawURL) <= 0 {
+			return route.Proxy
+		}
+	}
+	return ""
+}
+
 // cfClearance Cloudflare 过质询后下发的放行 Cookie（绑定出口 IP 与 UA）。
 const cfClearance = "cf_clearance"
 

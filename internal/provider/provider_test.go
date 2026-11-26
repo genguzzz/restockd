@@ -55,3 +55,24 @@ func TestEnvSolve(t *testing.T) {
 		t.Fatalf("want wrapped error, got %v", err)
 	}
 }
+
+// proxyClient 带出口代理提示的假 Client。
+type proxyClient struct{ proxy string }
+
+func (c proxyClient) Do(context.Context, *fetch.Session, *fetch.Request) (*fetch.Response, error) {
+	return nil, errors.New("unused")
+}
+
+func (c proxyClient) ProxyFor(string) string { return c.proxy }
+
+// 站点走代理出口时，求解请求带上同一代理（token 与提交表单同一 IP）。
+func TestEnvSolvePassesEgressProxy(t *testing.T) {
+	slv := &stubSolver{solution: solver.Solution{Token: "T"}}
+	env := Env{Site: domain.Site{ID: "s1"}, Client: proxyClient{proxy: "socks5://127.0.0.1:10808"}, Solver: slv}
+	if _, err := env.Solve(context.Background(), solver.Challenge{Kind: solver.KindRecaptchaV2, PageURL: "https://shop.test/login"}); err != nil {
+		t.Fatal(err)
+	}
+	if slv.challenge.Proxy != "socks5://127.0.0.1:10808" {
+		t.Fatalf("egress proxy not passed to solver: %+v", slv.challenge)
+	}
+}
