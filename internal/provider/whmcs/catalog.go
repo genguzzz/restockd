@@ -332,9 +332,9 @@ func sizeGB(value, unit string) int {
 }
 
 var (
-	availablePattern = regexp.MustCompile(`(?i)(\d+)\s*(available|可用|剩余|in stock)`)
+	availablePattern = regexp.MustCompile(`(?i)(\d+)\s*(available|可用|剩余|剩餘|in stock)`)
 	// outOfStockPattern 缺货文案：商品卡片、加购页与下单错误共用。
-	outOfStockPattern = regexp.MustCompile(`(?i)out of stock|currently unavailable|sold out|缺货|售罄|库存不足`)
+	outOfStockPattern = regexp.MustCompile(`(?i)out of stock|currently unavailable|sold out|缺货|缺貨|售罄|库存不足|庫存不足`)
 )
 
 // parseStock 库存判断顺序：数量文本 → 卡片上的缺货文案（徽标 / 按钮）→ 下单按钮可用性 → 补货提醒链接。

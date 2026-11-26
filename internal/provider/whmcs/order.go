@@ -194,7 +194,7 @@ func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain
 	}
 	if spec.DryRun {
 		// 结算表单能组装（支付方式可选）才算链路通；验证码只探测不求解。
-		form := checkout.doc.Find(`#frmCheckout, form[name="orderfrm"], form[action*="a=checkout"]`).First()
+		form := checkoutFormNode(checkout.doc)
 		gateway, err := pickGateway(form, spec.Gateway)
 		if err != nil {
 			return domain.OrderResult{Total: quote.Total}, err
@@ -253,10 +253,21 @@ func (p *Provider) prepareCheckout(ctx context.Context, env provider.Env, spec d
 	if captcha, ok := detectCaptcha(checkout.doc, checkout.resp.Body, captchaCheckout); ok {
 		p.rememberCheckoutCaptcha(captcha)
 	}
-	if checkout.doc.Find(`#frmCheckout, form[name="orderfrm"], form[action*="a=checkout"]`).Length() == 0 {
+	if checkoutFormNode(checkout.doc).Length() == 0 {
 		return nil, domain.Quote{}, promoUnknown, fmt.Errorf("checkout form not found (cart empty or product unavailable)")
 	}
 	fillTotals(checkout.doc, p.currency, &quote)
+	if spec.Coupon != "" && promo == promoUnknown {
+		// 跳过购物车的站点（如 SixtyNet）提交优惠码后直接 302 到结算页，WHMCS 的「优惠码无效」提示随跳转丢失：
+		// 结算页确认了这个码算接受；既没确认又没有任何折扣，按无效处理，避免原价锁单。
+		switch {
+		case promoApplied(checkout.doc, spec.Coupon):
+			promo, quote.Message = promoAccepted, "promo applied"
+		case quote.Discount.Cents == 0:
+			promo, quote.Message = promoRejected, "coupon not applied: checkout shows no discount"
+		}
+		quote.CouponValid = promo == promoAccepted
+	}
 	return checkout, quote, promo, nil
 }
 
@@ -478,19 +489,40 @@ func fillTotals(doc *goquery.Document, currency string, quote *domain.Quote) {
 	if money, ok := htmlutil.ParseMoney(doc.Find("#totalDueToday, .total-due-today .amt, #totalCartPrice, .order-summary .total").First().Text(), currency); ok {
 		quote.Total = money
 	}
-	if money, ok := htmlutil.ParseMoney(doc.Find("#subtotal, .subtotal span:last-child").First().Text(), currency); ok {
-		quote.Subtotal = money
-	} else {
-		quote.Subtotal = quote.Total
-	}
 	if money, ok := htmlutil.ParseMoney(doc.Find("#discount, .bordered-totals .discount, .promo-discount").First().Text(), currency); ok {
 		quote.Discount = money
 	}
+	if money, ok := htmlutil.ParseMoney(doc.Find("#subtotal, .subtotal span:last-child").First().Text(), currency); ok {
+		quote.Subtotal = money
+	} else {
+		// 页面没有小计（如 Lagom 结算页）：应付 + 折扣，币种一致时才加折扣。
+		quote.Subtotal = quote.Total
+		if quote.Discount.Currency == quote.Total.Currency {
+			quote.Subtotal.Cents += quote.Discount.Cents
+		}
+	}
+}
+
+// checkoutFormNode 结算页上真正的下单表单。不能按文档顺序取第一个 a=checkout 表单：
+// Lagom 结算页（如 SixtyNet）在它前面还有一个同样提交到 a=checkout 的小表单，里面没有支付方式。
+func checkoutFormNode(doc *goquery.Document) *goquery.Selection {
+	for _, selector := range []string{`#frmCheckout`, `form[name="orderfrm"]`} {
+		if form := doc.Find(selector).First(); form.Length() > 0 {
+			return form
+		}
+	}
+	forms := doc.Find(`form[action*="a=checkout"]`)
+	if withGateway := forms.FilterFunction(func(_ int, form *goquery.Selection) bool {
+		return form.Find(`[name="paymentmethod"]`).Length() > 0
+	}).First(); withGateway.Length() > 0 {
+		return withGateway
+	}
+	return forms.First()
 }
 
 // checkoutForm 组装结算表单：已登录用户 custtype=existing，选择支付方式，同意条款，处理验证码。
 func (p *Provider) checkoutForm(ctx context.Context, env provider.Env, checkout *page, spec domain.OrderSpec, pre *provider.Prefetch, purpose string) (url.Values, error) {
-	form := checkout.doc.Find(`#frmCheckout, form[name="orderfrm"], form[action*="a=checkout"]`).First()
+	form := checkoutFormNode(checkout.doc)
 	values := htmlutil.FormValues(form)
 	values.Set("submit", "true")
 	values.Set("custtype", "existing")
@@ -534,7 +566,8 @@ func pickGateway(form *goquery.Selection, preferred string) (string, error) {
 }
 
 var (
-	orderNumberPattern = regexp.MustCompile(`(?i)order number is:?\s*(?:<[^>]+>\s*)*(\d+)`)
+	// 英文与简繁中文语言包的「您的订单号是」（账号界面语言跟随客户设置，不能假定英文）。
+	orderNumberPattern = regexp.MustCompile(`(?i)(?:order number is|订单号(?:码)?(?:是|为)?|訂單(?:編號|號碼|号)(?:是|為)?)\s*[:：]?\s*(?:<[^>]+>\s*)*(\d+)`)
 	invoicePattern     = regexp.MustCompile(`viewinvoice\.php\?id=(\d+)`)
 	orderIDPattern     = regexp.MustCompile(`[?&]orderid=(\d+)|[?&]id=(\d+)`)
 )

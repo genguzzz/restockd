@@ -17,6 +17,7 @@ import (
 	"github.com/genguzzz/restockd/internal/domain"
 	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/provider"
+	"github.com/genguzzz/restockd/internal/provider/htmlutil"
 	"github.com/genguzzz/restockd/internal/solver"
 )
 
@@ -383,6 +384,16 @@ func TestAjaxErrorsAndHiddenTemplate(t *testing.T) {
 	}
 }
 
+// 优惠码被静默拒绝（SixtyNet：跳过购物车、提示随 302 丢失）：结算页没确认也没折扣，锁单必须中止，不能原价成交。
+func TestPlaceOrderAbortsOnSilentlyRejectedPromo(t *testing.T) {
+	fake := &fakeWHMCS{inStock: true, silentPromo: true}
+	p, env := newOrderEnv(t, fake, nil)
+	_, err := p.PlaceOrder(context.Background(), env, domain.OrderSpec{ProductID: "41", Cycle: domain.CycleMonthly, Coupon: "BOGUS"})
+	if !errors.Is(err, provider.ErrCouponInvalid) || fake.checkoutHit != 0 {
+		t.Fatalf("silent promo rejection must abort before checkout: err=%v checkoutHit=%d", err, fake.checkoutHit)
+	}
+}
+
 // 页面只是重新渲染了优惠码输入框（name="promocode"），不能当作优惠码已生效。
 func TestQuoteSilentPromoRejectionIsNotValid(t *testing.T) {
 	fake := &fakeWHMCS{inStock: true, silentPromo: true}
@@ -478,5 +489,38 @@ func TestMaintenanceError(t *testing.T) {
 	}
 	if err := maintenanceError("Shopping Cart - AaITR"); err != nil {
 		t.Fatalf("normal page flagged: %v", err)
+	}
+}
+
+// 繁体中文界面（SixtyNet 账号语言）：缺货页与下单完成页的订单号都要认得。
+func TestTraditionalChineseTexts(t *testing.T) {
+	if !outOfStockPattern.MatchString("缺貨中 很抱歉，本產品 / 服務目前處於缺貨中") {
+		t.Fatal("繁体「缺貨」必须识别为缺货")
+	}
+	for body, want := range map[string]string{
+		`<p>您的訂單編號是： <span>12345</span></p>`:     "12345",
+		`<p>您的订单号是：<strong>678</strong></p>`:     "678",
+		`<p>Your order number is: <b>42</b></p>`: "42",
+	} {
+		match := orderNumberPattern.FindStringSubmatch(body)
+		if match == nil || match[1] != want {
+			t.Fatalf("order number in %q: got %v, want %s", body, match, want)
+		}
+	}
+}
+
+// Lagom 结算页：真正的 #frmCheckout 前面还有一个也提交到 a=checkout 的小表单（无支付方式），不能选错。
+func TestCheckoutFormSkipsEarlierMiniForm(t *testing.T) {
+	doc, _ := htmlutil.Parse([]byte(`<html><body>
+<form method="post" action="cart.php?a=checkout"><input name="token" value="t"/></form>
+<form method="post" action="/cart.php?a=checkout" name="orderfrm" id="frmCheckout"><input type="radio" name="paymentmethod" value="paypal" checked/></form>
+<form method="post" action="/x?a=checkout"><input type="radio" name="paymentmethod" value="other"/></form>
+</body></html>`))
+	if gateway, err := pickGateway(checkoutFormNode(doc), ""); err != nil || gateway != "paypal" {
+		t.Fatalf("must pick #frmCheckout's gateway, got %q %v", gateway, err)
+	}
+	doc, _ = htmlutil.Parse([]byte(`<form action="cart.php?a=checkout"></form><form action="cart.php?a=checkout"><input type="radio" name="paymentmethod" value="stripe"/></form>`))
+	if gateway, err := pickGateway(checkoutFormNode(doc), ""); err != nil || gateway != "stripe" {
+		t.Fatalf("without #frmCheckout, the a=checkout form with gateways wins, got %q %v", gateway, err)
 	}
 }

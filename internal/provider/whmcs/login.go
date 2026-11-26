@@ -22,10 +22,10 @@ var _ provider.Authenticator = (*Provider)(nil)
 var loginPaths = []string{"/login", "/index.php?rp=/login", "/clientarea.php"}
 
 // captchaMessagePattern 登录页的验证码报错（如 WHMCS「Complete the captcha and try again.」）。
-var captchaMessagePattern = regexp.MustCompile(`(?i)captcha|验证码|人机验证`)
+var captchaMessagePattern = regexp.MustCompile(`(?i)captcha|验证码|驗證碼|人机验证|人機驗證`)
 
 // twoFactorPattern 登录后要求二次验证（暂不支持自动完成）。
-var twoFactorPattern = regexp.MustCompile(`(?i)two[- ]factor|2fa|二次验证|双重验证|两步验证`)
+var twoFactorPattern = regexp.MustCompile(`(?i)two[- ]factor|2fa|二次验证|二次驗證|双重验证|雙重驗證|两步验证|兩步驟驗證|兩步驗證`)
 
 // Login 实现 provider.Authenticator：提交 WHMCS 登录表单，验证码交给 Solver，成功后以 CheckSession 确认。
 func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Credentials) (provider.SessionInfo, error) {
