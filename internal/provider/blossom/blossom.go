@@ -4,10 +4,12 @@
 //   - 登录：POST /auth/email/login {email, password}，会话在 Cookie 里；GET /api/me 校验。
 //   - 报价：POST /api/quote（不占库存），试下单只做到这里。
 //   - 锁单：POST /api/checkout 生成订单与托管支付页（站点为其保留服务器 7 分钟，过期未付自动释放）。
+//     结账要 Turnstile（sitekey 来自 /api/guard-config，action=checkout），token 放在 _signals.turnstileToken；
+//     缺了站点回 428。token 与报价并行提前求解。
 //   - 取消：POST /api/orders/{id}/cancel（未付款订单不产生费用）。
 //
 // 站点的风控（设备 / 行为信号、传输指纹、频率）在服务端判断。这里按普通 API 客户端调用，
-// 不伪造浏览器信号；被风控拒绝时原样报告。
+// _signals 里只放真实求解的 Turnstile token，不伪造设备 / 行为信号；被风控拒绝时原样报告。
 package blossom
 
 import (
@@ -22,11 +24,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/genguzzz/restockd/internal/domain"
 	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/provider"
+	"github.com/genguzzz/restockd/internal/solver"
 )
 
 // Kind 注册名。
@@ -50,6 +54,7 @@ func meta() provider.Meta {
 		Name:            "Blossom Host",
 		Description:     "blossomhost.us（自研商店）：公开 /api/catalog 监控库存，邮箱密码登录后报价 / 结账锁单（支付页保留 7 分钟）",
 		Caps:            provider.Capabilities{Catalog: true, Coupon: true, Order: true, SessionCheck: true, Login: true, Cancel: true},
+		Captcha:         []solver.Kind{solver.KindTurnstile},
 		MinInterval:     30 * time.Second,
 		DefaultInterval: 60 * time.Second,
 		DefaultFetch:    domain.FetchDirect,
@@ -63,6 +68,9 @@ func meta() provider.Meta {
 type Provider struct {
 	baseURL  string
 	families map[string]bool
+	mu       sync.Mutex
+	// siteKey 结账 Turnstile 的 sitekey（/api/guard-config），首次锁单时取并缓存。
+	siteKey string
 }
 
 var (
@@ -227,13 +235,14 @@ func stock(plan rawPlan) domain.Stock {
 	switch {
 	case plan.ComingSoon:
 		return domain.Stock{Status: domain.StockClosed, Reason: "coming_soon"}
+	case plan.InStock || status == "available":
+		// 现货优先：有些现货套餐还带着已结束的旧预售字段（如 Texas）。
+		return domain.Stock{Status: domain.StockIn, Qty: &qty, Reason: status}
 	case plan.Preorder != nil && plan.Preorder.Available:
 		remaining := plan.Preorder.Remaining
 		return domain.Stock{Status: domain.StockPreorder, Qty: &remaining, Reason: status}
 	case plan.Preorder != nil || strings.HasPrefix(status, "preorder"):
 		return domain.Stock{Status: domain.StockClosed, Reason: status}
-	case plan.InStock || status == "available":
-		return domain.Stock{Status: domain.StockIn, Qty: &qty, Reason: status}
 	default:
 		zero := 0
 		return domain.Stock{Status: domain.StockOut, Qty: &zero, Reason: cmp.Or(status, "sold_out")}
@@ -290,6 +299,12 @@ type orderPayload struct {
 	PreorderVersion   *string  `json:"preorder_version"`
 	SeattleIPAccepted bool     `json:"seattle_ip_accepted"`
 	SeattleIPVersion  string   `json:"seattle_ip_version"`
+	// Signals 仅结账时带：站点前端在这里放风控信号与 Turnstile token，我们只放 token。
+	Signals *signals `json:"_signals,omitempty"`
+}
+
+type signals struct {
+	TurnstileToken string `json:"turnstileToken"`
 }
 
 type quoteResponse struct {
@@ -336,8 +351,8 @@ func (p *Provider) payload(ctx context.Context, env provider.Env, spec domain.Or
 		}
 	}
 	sort.Strings(payload.Addons)
-	if plan.Preorder != nil {
-		// 预售：等同网页上勾选「交付最长 30 天」的预售条款；预售不支持加密货币支付。
+	if stock(*plan).Status == domain.StockPreorder {
+		// 按预售购买（没有现货、预售开放）：等同网页上勾选「交付最长 30 天」的预售条款；预售不支持加密货币支付。
 		payload.PreorderAccepted, payload.PreorderVersion = true, &plan.Preorder.Version
 		if methods := plan.Preorder.PaymentMethods; payload.Provider == "crypto" || (len(methods) > 0 && !slices.Contains(methods, payload.Provider)) {
 			return orderPayload{}, rawPlan{}, fmt.Errorf("%w: preorder accepts %v, not %s", provider.ErrOrderRejected, plan.Preorder.PaymentMethods, payload.Provider)
@@ -380,6 +395,18 @@ type checkoutResponse struct {
 
 // PlaceOrder 实现 provider.Orderer：报价确认可买后 POST /api/checkout；试下单停在报价。
 func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain.OrderSpec) (domain.OrderResult, error) {
+	timings := provider.NewTimings()
+	var pre *provider.Prefetch
+	var challenge solver.Challenge
+	if !spec.DryRun {
+		siteKey, err := p.checkoutSiteKey(ctx, env)
+		if err != nil {
+			return domain.OrderResult{}, err
+		}
+		challenge = solver.Challenge{Kind: solver.KindTurnstile, SiteKey: siteKey, PageURL: p.baseURL + "/#/buy", Action: "checkout", Purpose: env.Site.Name + " 锁单 " + spec.ProductID}
+		pre = env.Prefetch(ctx, challenge) // 与读目录、报价并行
+		defer pre.Stop()
+	}
 	payload, plan, err := p.payload(ctx, env, spec)
 	if err != nil {
 		return domain.OrderResult{}, err
@@ -397,9 +424,29 @@ func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain
 	if spec.DryRun {
 		return domain.OrderResult{Total: quote.Total, Message: fmt.Sprintf("dry run: quoted, checkout not submitted; plan=%s os=%s months=%d gateway=%s stock=%d", payload.Plan, payload.OS, payload.TermMonths, payload.Provider, plan.StockCount)}, nil
 	}
+	timings.Lap("quote")
+	solution, err := pre.Solve(ctx, env, challenge)
+	if err != nil {
+		return domain.OrderResult{Total: quote.Total}, err
+	}
+	timings.Lap("captcha_wait")
+	timings.Note("captcha_solve", pre.Elapsed())
+	payload.Signals = &signals{TurnstileToken: solution.Token}
 	var resp checkoutResponse
-	if err := p.call(ctx, env, http.MethodPost, "/api/checkout", payload, &resp); err != nil {
-		return domain.OrderResult{Total: quote.Total}, fmt.Errorf("checkout: %w", rejected(err))
+	err = p.call(ctx, env, http.MethodPost, "/api/checkout", payload, &resp)
+	var apiErr *apiError
+	if errors.As(err, &apiErr) && apiErr.status == http.StatusPreconditionRequired {
+		// token 单次有效、5 分钟过期：站点仍要验证就现解一个再试一次。
+		if solution, err = env.Solve(ctx, challenge); err != nil {
+			return domain.OrderResult{Total: quote.Total}, err
+		}
+		payload.Signals = &signals{TurnstileToken: solution.Token}
+		resp = checkoutResponse{}
+		err = p.call(ctx, env, http.MethodPost, "/api/checkout", payload, &resp)
+	}
+	timings.Lap("checkout")
+	if err != nil {
+		return domain.OrderResult{Total: quote.Total}, fmt.Errorf("checkout: %w; %s", rejected(err), timings)
 	}
 	switch {
 	case resp.Status == "availability":
@@ -414,8 +461,31 @@ func (p *Provider) PlaceOrder(ctx context.Context, env provider.Env, spec domain
 	}
 	return domain.OrderResult{
 		OrderID: resp.OrderID.String(), PayURL: resp.CheckoutURL, Total: quote.Total,
-		Message: fmt.Sprintf("payment page via %s; the site holds the server for 7 minutes", cmp.Or(resp.Provider, payload.Provider)),
+		Message: timings.Append(fmt.Sprintf("payment page via %s; the site holds the server for 7 minutes", cmp.Or(resp.Provider, payload.Provider))),
 	}, nil
+}
+
+// checkoutSiteKey 结账 Turnstile 的 sitekey（与站点前端一样读 /api/guard-config），缓存在实例上。
+func (p *Provider) checkoutSiteKey(ctx context.Context, env provider.Env) (string, error) {
+	p.mu.Lock()
+	key := p.siteKey
+	p.mu.Unlock()
+	if key != "" {
+		return key, nil
+	}
+	var config struct {
+		TurnstileSiteKey string `json:"turnstile_site_key"`
+	}
+	if err := p.call(ctx, env, http.MethodGet, "/api/guard-config", nil, &config); err != nil {
+		return "", fmt.Errorf("guard config: %w", err)
+	}
+	if config.TurnstileSiteKey == "" {
+		return "", errors.New("guard config: no turnstile site key")
+	}
+	p.mu.Lock()
+	p.siteKey = config.TurnstileSiteKey
+	p.mu.Unlock()
+	return config.TurnstileSiteKey, nil
 }
 
 // CancelOrder 实现 provider.Canceler：取消未付款订单。

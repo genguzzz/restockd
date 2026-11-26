@@ -5,19 +5,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/genguzzz/restockd/internal/domain"
 	"github.com/genguzzz/restockd/internal/fetch"
 	"github.com/genguzzz/restockd/internal/provider"
+	"github.com/genguzzz/restockd/internal/solver"
 )
 
 const catalogJSON = `{"plans":[
- {"key":"isp-texas-xxs","name":"ISP-XXS","family":"isp","offer_label":"ISP — Odessa, TX · NetWest · 1 Gbps","location":"Odessa, TX","carrier":"NetWest","ip_label":"NetWest ISP IPv4","storage_label":"NVMe","vcpu":1,"ram_gb":1,"disk_gb":15,"hdd_gb":0,"bandwidth_gbps":1,"transfer_gb":1000,"coming_soon":false,"physical":false,"stock_count":39,"in_stock":true,"availability_status":"available","term_prices":{"1":17.0,"3":51.0,"6":102.0,"12":204.0},"os_images":[{"key":"debian-12","name":"Debian 12","kind":"linux"},{"key":"rocky-9","name":"Rocky Linux 9","kind":"linux"}]},
+ {"key":"isp-texas-xxs","name":"ISP-XXS","family":"isp","offer_label":"ISP — Odessa, TX · NetWest · 1 Gbps","location":"Odessa, TX","carrier":"NetWest","ip_label":"NetWest ISP IPv4","storage_label":"NVMe","vcpu":1,"ram_gb":1,"disk_gb":15,"hdd_gb":0,"bandwidth_gbps":1,"transfer_gb":1000,"coming_soon":false,"physical":false,"stock_count":39,"in_stock":true,"availability_status":"available","term_prices":{"1":17.0,"3":51.0,"6":102.0,"12":204.0},"preorder":{"available":false,"version":"texas-old","remaining":null,"payment_methods":["stripe","alipay"]},"os_images":[{"key":"debian-12","name":"Debian 12","kind":"linux"},{"key":"rocky-9","name":"Rocky Linux 9","kind":"linux"}]},
  {"key":"isp-xs","name":"ISP-XS","family":"isp","offer_label":"ISP — Washington, DC","location":"Washington, DC","vcpu":2,"ram_gb":2,"disk_gb":20,"bandwidth_gbps":1,"stock_count":0,"in_stock":false,"availability_status":"sold_out","term_prices":{"1":19.0},"os_images":[]},
  {"key":"isp-att-xs","name":"ISP-XS","family":"isp","location":"Los Angeles, CA","stock_count":0,"in_stock":false,"availability_status":"preorder_closed","term_prices":{"3":45.9,"12":162.0},"preorder":{"available":false,"version":"att-v1","remaining":0,"payment_methods":["stripe","alipay"]}},
  {"key":"metal-427","name":"AMD Epyc 4545P","family":"metal","location":"Amsterdam","physical":true,"stock_count":1,"in_stock":true,"availability_status":"available","term_prices":{"1":199.0,"3":597.0}}
@@ -32,6 +35,26 @@ type fakeSite struct {
 	checkouts int
 	// catalog 覆盖默认目录（模拟预售开放等变化）。
 	catalog string
+	// rejectTokens 前几次结账即使带了 token 也回 428（模拟 token 过期）。
+	rejectTokens int
+	tokens       []string
+}
+
+// stubSolver 按调用次数发 Turnstile token。
+type stubSolver struct {
+	mu     sync.Mutex
+	calls  int
+	action string
+}
+
+func (s *stubSolver) Name() string              { return "stub" }
+func (s *stubSolver) Supports(solver.Kind) bool { return true }
+func (s *stubSolver) Solve(_ context.Context, challenge solver.Challenge) (solver.Solution, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	s.action = challenge.Action
+	return solver.Solution{Token: fmt.Sprintf("TS-%d", s.calls)}, nil
 }
 
 func (f *fakeSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -80,9 +103,22 @@ func (f *fakeSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			coupon = `"GOOD"`
 		}
 		_, _ = w.Write([]byte(`{"total":17.0,"term_subtotal":17.0,"coupon_code":` + coupon + `,"coupon_discount":0.0,"months":1}`))
+	case "/api/guard-config":
+		_, _ = w.Write([]byte(`{"turnstile_site_key":"0xSITE"}`))
 	case "/api/checkout":
 		f.checkouts++
-		f.checkout(w, decode())
+		payload := decode()
+		if payload.Signals == nil || payload.Signals.TurnstileToken == "" || f.rejectTokens > 0 {
+			if payload.Signals != nil {
+				f.tokens = append(f.tokens, payload.Signals.TurnstileToken)
+				f.rejectTokens--
+			}
+			w.WriteHeader(http.StatusPreconditionRequired)
+			_, _ = w.Write([]byte(`{"error":"Please complete the verification and try again."}`))
+			return
+		}
+		f.tokens = append(f.tokens, payload.Signals.TurnstileToken)
+		f.checkout(w, payload)
 	case "/api/orders/501/cancel":
 		f.cancelled = "501"
 		_, _ = w.Write([]byte(`{"ok":true,"refunded":false}`))
@@ -100,7 +136,7 @@ func newEnv(t *testing.T, fake *fakeSite) (*Provider, provider.Env) {
 	instance, _ := New(site)
 	client, _ := fetch.NewHTTPClient(5*time.Second, "")
 	session, _ := fetch.NewSession(server.URL, nil, "")
-	return instance.(*Provider), provider.Env{Site: site, Client: client, Session: session, Account: &domain.Account{ID: "a1"}}
+	return instance.(*Provider), provider.Env{Site: site, Client: client, Session: session, Account: &domain.Account{ID: "a1"}, Solver: &stubSolver{}}
 }
 
 func TestCatalog(t *testing.T) {
@@ -204,12 +240,22 @@ func TestPlaceOrder(t *testing.T) {
 	if err != nil || result.Total.Cents != 1700 || fake.checkouts != 0 {
 		t.Fatalf("dry run: %v %+v checkouts=%d", err, result, fake.checkouts)
 	}
-	if got := fake.lastQuote; got.OS != "debian-12" || got.TermMonths != 1 || got.Provider != "alipay" || !got.TermsAccepted || got.TermsVersion != legalVersion {
+	if got := fake.lastQuote; got.OS != "debian-12" || got.TermMonths != 1 || got.Provider != "alipay" || !got.TermsAccepted || got.TermsVersion != legalVersion || got.PreorderAccepted {
 		t.Fatalf("payload: %+v", got)
 	}
+	slv := env.Solver.(*stubSolver)
+	before := slv.calls
 	result, err = p.PlaceOrder(ctx, env, spec)
 	if err != nil || result.OrderID != "501" || result.PayURL != "https://pay.example/501" {
 		t.Fatalf("order: %v %+v", err, result)
+	}
+	if slv.calls != before+1 || slv.action != "checkout" || len(fake.tokens) != 1 {
+		t.Fatalf("turnstile: calls=%d action=%q tokens=%v", slv.calls, slv.action, fake.tokens)
+	}
+	// 预取的 token 被拒（428）：现解一个再试一次。
+	fake.rejectTokens, fake.tokens = 1, nil
+	if result, err = p.PlaceOrder(ctx, env, spec); err != nil || result.OrderID != "501" || len(fake.tokens) != 2 || fake.tokens[0] == fake.tokens[1] {
+		t.Fatalf("retry after 428: %v tokens=%v", err, fake.tokens)
 	}
 	if err := p.CancelOrder(ctx, env, result); err != nil || fake.cancelled != "501" {
 		t.Fatalf("cancel: %v %q", err, fake.cancelled)
