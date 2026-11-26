@@ -16,6 +16,7 @@ import (
 	"github.com/genguzzz/restockd/internal/api"
 	"github.com/genguzzz/restockd/internal/domain"
 	"github.com/genguzzz/restockd/internal/engine"
+	_ "github.com/genguzzz/restockd/internal/provider/blossom"
 	_ "github.com/genguzzz/restockd/internal/provider/usvps24"
 	_ "github.com/genguzzz/restockd/internal/provider/whmcs"
 	"github.com/genguzzz/restockd/internal/store"
