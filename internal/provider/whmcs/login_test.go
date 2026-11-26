@@ -165,3 +165,28 @@ func TestCheckSessionFallsBackToRouteParam(t *testing.T) {
 		t.Fatalf("fallback must be remembered, got %s", got)
 	}
 }
+
+// 商品组页面不放退出链接的主题（SixtyNet Lagom2）：以客户中心为准；客户中心是登录表单则仍判失效。
+func TestCheckSessionFallsBackToClientArea(t *testing.T) {
+	loggedIn := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/clientarea.php" && loggedIn:
+			fmt.Fprint(w, `<html><body><a href="/logout.php">Logout</a><span class="client-name">Me</span></body></html>`)
+		case r.URL.Path == "/clientarea.php":
+			fmt.Fprint(w, `<html><body><a href="/logout.php">x</a><form><input name="username"/><input type="password" name="password"/></form></body></html>`)
+		default:
+			fmt.Fprint(w, `<html><body><a href="/clientarea.php">Client Area</a></body></html>`)
+		}
+	}))
+	defer server.Close()
+	p, env := newLoginEnv(t, server)
+	info, err := p.CheckSession(context.Background(), env)
+	if err != nil || info.Identity != "Me" {
+		t.Fatalf("logged-in client area must count as a session: %v %+v", err, info)
+	}
+	loggedIn = false
+	if _, err := p.CheckSession(context.Background(), env); !errors.Is(err, provider.ErrSessionExpired) {
+		t.Fatalf("client area showing a login form means expired, got %v", err)
+	}
+}

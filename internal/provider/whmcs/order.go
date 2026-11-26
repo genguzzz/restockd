@@ -131,7 +131,8 @@ func isLoginPage(doc *goquery.Document, finalURL string) bool {
 	return doc.Find(`form input[name="password"]`).Length() > 0 && doc.Find(`a[href*="logout"]`).Length() == 0 && doc.Find(`input[name="username"], input[name="email"]`).Length() > 0
 }
 
-// CheckSession 以商品组页面是否带退出链接判断登录态；部分站点 clientarea.php 会强制跳登录页，不可靠。
+// CheckSession 以商品组页面是否带退出链接判断登录态；组页面没有退出链接时再看客户中心
+// （部分站点 clientarea.php 会强制跳登录页，所以它只能补充、不能单独否定）。
 // 余额与身份尽力从客户中心读取，读不到不影响结论。
 func (p *Provider) CheckSession(ctx context.Context, env provider.Env) (provider.SessionInfo, error) {
 	group, err := fetchPage(ctx, env, &fetch.Request{Method: http.MethodGet, URL: p.GroupURL(p.groups[0])})
@@ -144,11 +145,13 @@ func (p *Provider) CheckSession(ctx context.Context, env provider.Env) (provider
 		return provider.SessionInfo{}, err
 	}
 	doc := group.doc
-	if doc.Find(`a[href*="logout"]`).Length() == 0 {
+	area, areaErr := p.get(ctx, env, "/clientarea.php")
+	if doc.Find(`a[href*="logout"]`).Length() == 0 && !loggedInPage(area, areaErr) {
+		// 有的主题（如 SixtyNet 的 Lagom2）商品组页面不放退出链接：再看客户中心，带退出链接且不是登录表单才算已登录。
 		return provider.SessionInfo{}, provider.ErrSessionExpired
 	}
 	info := provider.SessionInfo{Identity: htmlutil.CleanText(doc.Find(".client-name, .user-name, .dropdown-toggle .item-text, .panel-title-user").First().Text())}
-	if area, err := p.get(ctx, env, "/clientarea.php"); err == nil {
+	if areaErr == nil {
 		if info.Identity == "" {
 			info.Identity = htmlutil.CleanText(area.doc.Find(".client-name, .user-name, .panel-title-user").First().Text())
 		}
@@ -157,6 +160,11 @@ func (p *Provider) CheckSession(ctx context.Context, env provider.Env) (provider
 		}
 	}
 	return info, nil
+}
+
+// loggedInPage 客户中心页面是否处于登录态：带退出链接且没有登录表单。
+func loggedInPage(area *page, err error) bool {
+	return err == nil && area.doc.Find(`a[href*="logout"]`).Length() > 0 && passwordForm(area.doc) == nil
 }
 
 // Quote 走完 加购 → 配置 → 优惠码 → 结算页，读取应付金额，不提交订单。
