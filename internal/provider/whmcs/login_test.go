@@ -146,3 +146,22 @@ func TestLoginCaptchaRejectionIsNotCredentialFailure(t *testing.T) {
 		t.Fatalf("captcha rejection must not be a credential failure: %v", err)
 	}
 }
+
+// 站点没开短网址、重启后还没轮询过目录：会话校验遇到 /store/... 404 要切到 index.php?rp= 重试，不能误判失效。
+func TestCheckSessionFallsBackToRouteParam(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/store/srv" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, `<html><body><a href="/logout.php">Logout</a></body></html>`)
+	}))
+	defer server.Close()
+	p, env := newLoginEnv(t, server)
+	if _, err := p.CheckSession(context.Background(), env); err != nil {
+		t.Fatalf("404 on the short URL must fall back to index.php?rp=: %v", err)
+	}
+	if got := p.GroupURL("srv"); got != server.URL+"/index.php?rp=/store/srv" {
+		t.Fatalf("fallback must be remembered, got %s", got)
+	}
+}

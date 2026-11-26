@@ -81,7 +81,12 @@ func (p *Provider) Login(ctx context.Context, env provider.Env, creds domain.Cre
 	}
 	info, err := p.CheckSession(ctx, env)
 	if errors.Is(err, provider.ErrSessionExpired) {
-		return info, fmt.Errorf("%w: site accepted the form but the session is not logged in", provider.ErrLoginFailed)
+		// 带上表单提交后落到的页面，便于判断是二次验证、安全提示还是会话没保持住。
+		landed := cmp.Or(htmlutil.CleanText(result.Find("title").First().Text()), "untitled")
+		if message := errorMessage(result); message != "" {
+			landed += " / " + message
+		}
+		return info, fmt.Errorf("%w: site accepted the form but the session is not logged in (landed on %s: %s)", provider.ErrLoginFailed, submitted.resp.URL, landed)
 	}
 	return info, err
 }

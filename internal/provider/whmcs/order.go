@@ -135,6 +135,11 @@ func isLoginPage(doc *goquery.Document, finalURL string) bool {
 // 余额与身份尽力从客户中心读取，读不到不影响结论。
 func (p *Provider) CheckSession(ctx context.Context, env provider.Env) (provider.SessionInfo, error) {
 	group, err := fetchPage(ctx, env, &fetch.Request{Method: http.MethodGet, URL: p.GroupURL(p.groups[0])})
+	var httpErr *fetch.HTTPError
+	if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound && p.useRouteParam(p.groups[0]) {
+		// 重启后还没轮询过目录、不知道站点没开短网址：与 Catalog 一样切到 index.php?rp= 再试。
+		group, err = fetchPage(ctx, env, &fetch.Request{Method: http.MethodGet, URL: p.GroupURL(p.groups[0])})
+	}
 	if err != nil {
 		return provider.SessionInfo{}, err
 	}
